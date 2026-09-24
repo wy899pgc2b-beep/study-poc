@@ -25,7 +25,7 @@
         <fieldset class="card">
           <legend>検証の種類</legend>
           <label class="choice"><input type="radio" name="mode" value="scenario" checked>
-            <span><b>検証シナリオ</b>(約 4 分)<br><small>音声の指示どおりに「読む・書く・目を閉じる・机に伏せる・よそ見・顔を触る・顔を近づける・離席」を行い、各場面の判定が正しいかを調べます。</small></span></label>
+            <span><b>検証シナリオ</b>(約 4 分半)<br><small>音声の指示どおりに「読む・書く・目を閉じる・前に傾いて目を閉じる・机に伏せる・よそ見・顔を触る・顔を近づける・離席」を行い、各場面の判定が正しいかを調べます。</small></span></label>
           <label class="choice"><input type="radio" name="mode" value="free">
             <span><b>自由に学習</b><br><small>普段どおりに学習し、1 分ごとの集中度や処理の速さ・電池の減り方を確かめます。</small></span></label>
         </fieldset>
@@ -68,8 +68,9 @@
             <label class="field">離席と判定するまでの秒数
               <input name="awaySec" type="number" min="5" max="60" value="20" inputmode="numeric">
             </label>
-            <label class="field">目と机の距離の警告しきい値(cm)
-              <input name="eyeDeskThreshold" type="number" min="20" max="45" value="30" inputmode="numeric">
+            <label class="field">「近すぎ」と判定する近づき方(%)
+              <input name="closeRatio" type="number" min="15" max="40" value="25" inputmode="numeric">
+              <small>キャリブレーション時(正しい姿勢)の距離より、この割合以上近づいたら知らせます。</small>
             </label>
             <label class="field">カメラの画角(長辺・度)
               <input name="fov" type="number" min="40" max="120" value="69" inputmode="numeric">

@@ -189,6 +189,26 @@ export function renderResult(container, data, { onBatteryChange } = {}) {
 
   container.append(section('状態の内訳', stateBars(s.totals)));
 
+  const cal = data.calibration;
+  if (cal?.measuredEyeDeskCm) {
+    const threshold = cal.measuredEyeDeskCm * (1 - data.cfg.eyeDeskCloseRatio);
+    const rows = [
+      el('tr', {}, el('td', { text: 'あなたの基準(キャリブレーション時)' }), el('td', { text: `${cal.measuredEyeDeskCm}cm` })),
+      el('tr', {}, el('td', { text: '「近すぎ」と判定する距離' }), el('td', { text: `${threshold.toFixed(1)}cm 未満` })),
+      el('tr', {}, el('td', { text: '「近すぎ」の通知' }), el('td', { text: `${s.counts.posture_close || 0} 回` })),
+    ];
+    const guideline = data.cfg.eyeDeskGuidelineCm;
+    container.append(
+      section(
+        '目と机の距離',
+        el('table', {}, el('tbody', {}, ...rows)),
+        cal.measuredEyeDeskCm < guideline
+          ? el('p', { class: 'note', text: `参考:一般的には、目と教材の距離は ${guideline}cm 以上が目安とされています。` })
+          : null,
+      ),
+    );
+  }
+
   const counts = Object.entries(EVENT_LABELS)
     .filter(([k]) => s.counts[k])
     .map(([k, label]) => el('tr', {}, el('td', { text: label }), el('td', { text: `${s.counts[k]} 回` })));

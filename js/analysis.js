@@ -318,6 +318,7 @@ export class Analyzer {
     this.prev = null;
     this.handMotion = new HandMotion(cfg);
     this.handSamples = [];
+    this.faceSamples = [];
     this.perclos = [];
     this.closedSince = null;
     this.closedRawSince = null;
@@ -491,7 +492,16 @@ export class Analyzer {
     const eyeDeskCm = estimateEyeDeskCm(f, cal);
     // 顔を机に近づけすぎると顔の特徴点が取れなくなる(2 回目の実機検証)。そのときは肩に対する頭の低さで判定する
     const headDropped = !f.faceVisible && f.poseVisible && (headRatio != null ? headRatio < cfg.headCloseRatio : !!f.headLow);
-    const tooClose = (eyeDeskCm != null && eyeDeskCm < cfg.eyeDeskThresholdCm) || headDropped;
+    // 本人の基準(キャリブレーション時の距離)より一定の割合以上近づいたら「近すぎ」(設計書 3.9、決定事項 D-7)
+    const eyeDeskThresholdCm = cal?.measuredEyeDeskCm ? cal.measuredEyeDeskCm * (1 - cfg.eyeDeskCloseRatio) : null;
+    const tooClose = (eyeDeskCm != null && eyeDeskThresholdCm != null && eyeDeskCm < eyeDeskThresholdCm) || headDropped;
+
+    // 【試験中・判定には使わない】前に傾いて居眠りしている候補:顔が見えにくくなり、体は映っていて、ペンを持っていない。
+    // 2 回目の実機検証で、前に傾いて目を閉じると目の状態を正しく判定できなかったため、別の手がかりとして記録だけ行う
+    this.faceSamples.push({ t, v: f.faceVisible ? 1 : 0 });
+    this.faceSamples = this.faceSamples.filter((x) => t - x.t <= cfg.faceRateWindowSec * 1000);
+    const faceRate = this.faceSamples.reduce((a, x) => a + x.v, 0) / this.faceSamples.length;
+    const dozeShadow = f.poseVisible && !penGrip && faceRate < cfg.dozeShadowFaceRate;
     const slouch = cal?.slouchRatio != null && f.slouchRatio != null && f.slouchRatio < cal.slouchRatio * cfg.slouchRatio;
     const tilt = cal?.rollDeg != null && f.faceVisible && Math.abs(f.rollDeg - cal.rollDeg) > cfg.tiltDeg;
     for (const [key, cond, sec] of [
@@ -523,6 +533,7 @@ export class Analyzer {
         perclos,
         closedSec,
         eyeDeskCm,
+        eyeDeskThresholdCm,
         cameraTiltDeg: f.cameraTiltDeg,
         yawDev,
         pitchUp,
@@ -530,6 +541,8 @@ export class Analyzer {
         earRatio: cal?.ear && f.ear != null ? f.ear / cal.ear : null,
         eyesClosed: closed ? 1 : 0,
         faceVisible: f.faceVisible ? 1 : 0,
+        faceRate,
+        dozeShadow: dozeShadow ? 1 : 0,
         poseVisible: f.poseVisible ? 1 : 0,
         headRatio,
         slouchRel: cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null,

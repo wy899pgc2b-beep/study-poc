@@ -28,6 +28,8 @@ export const DEFAULTS = {
   faceDownSec: 20, // 設計書の初期案は 30 秒。検証シナリオで確かめられるよう 20 秒で試す
   faceGapSec: 2, // 顔の検出のちらつき(この秒数以内の途切れ)は続いているとみなす
   headLowRatio: 0.5, // 肩からの頭の高さがキャリブレーション時のこの割合未満なら「頭が低い」(伏せている)
+  faceRateWindowSec: 10, // 顔の検出率を測る時間
+  dozeShadowFaceRate: 0.7, // 【試験中】顔の検出率がこれ未満なら「前に傾いた居眠り」の候補として記録する
 
   // 手の動き:速さの単位は、顔の幅を 1 とした 1 秒あたりの移動量
   handWindowSec: 1.5,
@@ -47,8 +49,11 @@ export const DEFAULTS = {
   // 姿勢(設計書 4.9)
   irisDiameterCm: 1.17,
   cameraFovLongSideDeg: 69,
-  eyeDeskThresholdCm: 30,
+  // 目と机の距離は本人の基準で判定する:キャリブレーション時の距離よりこの割合以上近づいたら「近すぎ」(決定事項 D-7)
+  eyeDeskCloseRatio: 0.25,
   eyeDeskAlertSec: 20,
+  // 一般的な目安。本人の基準がこれより近いときに、参考として 1 回だけ案内する
+  eyeDeskGuidelineCm: 30,
   headCloseRatio: 0.75, // 顔が取れないとき、肩からの頭の高さがこの割合未満なら「近すぎ」
   slouchRatio: 0.8,
   slouchAlertSec: 60,

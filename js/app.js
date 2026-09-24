@@ -117,7 +117,7 @@ function readOptions(form) {
     ...DEFAULTS,
     analysisFps: num('fps', DEFAULTS.analysisFps),
     awaySec: num('awaySec', DEFAULTS.awaySec),
-    eyeDeskThresholdCm: num('eyeDeskThreshold', DEFAULTS.eyeDeskThresholdCm),
+    eyeDeskCloseRatio: num('closeRatio', DEFAULTS.eyeDeskCloseRatio * 100) / 100,
     cameraFovLongSideDeg: num('fov', DEFAULTS.cameraFovLongSideDeg),
   };
   return { opts, cfg };
@@ -434,7 +434,13 @@ function startRunning(cal) {
   $('scenario-panel').hidden = !scenario;
   $('phase-label').textContent = scenario ? '検証シナリオ' : S.opts.subject;
   S.voice.beep({ freq: 1046, sec: 0.25, volume: 0.4 });
-  if (!scenario) say('学習を始めます。がんばりましょう', { interrupt: true });
+  if (!scenario) {
+    say('学習を始めます。がんばりましょう', { interrupt: true });
+    // 一般的な目安は参考として 1 回だけ案内する(決定事項 D-7)
+    if (S.opts.eyeDesk < S.cfg.eyeDeskGuidelineCm) {
+      say(`参考です。一般的には、目と教材の距離は${S.cfg.eyeDeskGuidelineCm}センチ以上が目安とされています`);
+    }
+  }
 }
 
 function addEvent(ev) {

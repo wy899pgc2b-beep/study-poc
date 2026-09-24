@@ -22,6 +22,8 @@ export const DIAGNOSTIC_METRICS = [
   'headRatio',
   'slouchRel',
   'faceVisible',
+  'faceRate',
+  'dozeShadow',
   'poseVisible',
   'cameraTiltDeg',
 ];
@@ -30,7 +32,8 @@ const STATE_LETTERS = { work: 'w', think: 't', lookaway: 'l', drowsy: 'd', sleep
 
 /**
  * 1 秒ごとの様子を文字列にする(しきい値の調整用)。
- * state:w=作業 t=思考 l=よそ見 d=うとうと s=居眠り a=不在 A=離席 p=一時停止 / face・closed・grip:1=あり 0=なし -=不明
+ * state:w=作業 t=思考 l=よそ見 d=うとうと s=居眠り a=不在 A=離席 p=一時停止
+ * face(顔を検出)・closed(閉眼)・grip(ペンの形)・doze(前に傾いた居眠りの候補・試験中):1=あり 0=なし -=不明
  */
 export function phaseTimeline(samples, sec) {
   const n = Math.ceil(sec);
@@ -54,6 +57,7 @@ export function phaseTimeline(samples, sec) {
     face: buckets.map((b) => flag(b, 'faceVisible')).join(''),
     closed: buckets.map((b) => flag(b, 'eyesClosed')).join(''),
     grip: buckets.map((b) => flag(b, 'penGrip')).join(''),
+    doze: buckets.map((b) => flag(b, 'dozeShadow')).join(''),
   };
 }
 
@@ -109,6 +113,15 @@ export const SCENARIO = [
     graceSec: 4,
     expect: { states: ['drowsy', 'sleep'], minShare: 0.6, mustReach: 'sleep' },
     purpose: '目を閉じた居眠りを検知できるか(10 秒で居眠りと判定)',
+  },
+  {
+    id: 'doze',
+    label: '前に傾いて目を閉じる',
+    speech: '少し前に傾いて、目を閉じてください。いつもの居眠りの姿勢で、音が鳴るまで続けてください',
+    sec: 25,
+    graceSec: 4,
+    expect: { states: ['drowsy', 'sleep'], minShare: 0.6, mustReach: 'sleep' },
+    purpose: 'ふだんの居眠りの姿勢(少し前に傾いて目を閉じる)を検知できるか',
   },
   {
     id: 'facedown',

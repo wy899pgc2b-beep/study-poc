@@ -44,6 +44,7 @@ function face(t, over = {}) {
   };
 }
 
+const lostFace = (t, over = {}) => ({ t, present: true, faceVisible: false, poseVisible: true, hands: [], headHeight: 0.3, ...over });
 const absent = (t) => ({ t, present: false, faceVisible: false, poseVisible: false, hands: [] });
 
 // 5fps で duration 秒ぶん流し、最後の結果と全イベントを返す
@@ -258,16 +259,39 @@ test('癖:手が顔に 1 秒以上あれば「顔を触る」、5 秒以内の�
   assert.ok(r2.events.some((e) => e.type === 'habit_head'));
 });
 
-test('姿勢:目と机の距離がしきい値未満で 20 秒続いたら通知', () => {
+test('姿勢:本人の基準(キャリブレーション時の距離)より 25% 以上近い状態が 20 秒続いたら通知', () => {
   const a = new Analyzer(cfg);
-  a.setCalibration({ ...CAL, cameraHeightCm: 10 });
-  // 高さ = 10 + (-verticalOffset) = 10 + 15 = 25cm < 30cm
-  const near = (t) => face(t, { camDistCm: 40, verticalOffsetCm: -15 });
-  const r1 = run(a, 0, 19, near);
+  // 基準 30cm → 22.5cm 未満で近すぎ。カメラの高さ 10cm、目はカメラより (-verticalOffset) 上
+  a.setCalibration({ ...CAL, cameraHeightCm: 10, measuredEyeDeskCm: 30 });
+  const at = (cm) => (t) => face(t, { camDistCm: 40, verticalOffsetCm: -(cm - 10) });
+  // 2 回目の実機検証の読むときの距離(約 23cm)では通知しない
+  const reading = run(a, 0, 25, at(23));
+  assert.equal(reading.last.flags.tooClose, false);
+  assert.equal(reading.last.metrics.eyeDeskThresholdCm, 22.5);
+  const r1 = run(a, 25200, 19, at(20));
   assert.equal(r1.last.flags.tooClose, true);
   assert.ok(!r1.events.some((e) => e.type === 'posture_close'));
-  const r2 = run(a, 19200, 2, near);
+  const r2 = run(a, 44400, 2, at(20));
   assert.equal(r2.events.filter((e) => e.type === 'posture_close').length, 1);
+});
+
+test('姿勢:キャリブレーションがなければ距離では判定しない', () => {
+  const a = new Analyzer(cfg);
+  const r = run(a, 0, 2, (t) => face(t, { camDistCm: 40, verticalOffsetCm: 0 }));
+  assert.equal(r.last.flags.tooClose, false);
+});
+
+test('【試験中】前に傾いた居眠りの候補:顔が見えにくく、体が映っていて、ペンを持っていない', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration({ ...CAL, headHeight: 1 });
+  // 2 回目の実機検証と同じく、顔が半分くらいしか検出されない
+  const r = run(a, 0, 12, (t) => (t % 2000 < 1000 ? face(t) : lostFace(t, { headHeight: 0.9 })));
+  assert.equal(r.last.metrics.dozeShadow, 1);
+  // 状態の判定には使わない
+  assert.notEqual(r.last.state, 'sleep');
+  const b = new Analyzer(cfg);
+  b.setCalibration(CAL);
+  assert.equal(run(b, 0, 12, (t) => face(t)).last.metrics.dozeShadow, 0);
 });
 
 test('記録:1 分ごとの集計、実効集中時間、学習スタイル', () => {
@@ -391,7 +415,6 @@ test('端末の傾き:DeviceOrientation からカメラの上向きの角度を�
   assert.equal(cameraTiltFromOrientation(null, 0, 'front'), null);
 });
 
-const lostFace = (t, over = {}) => ({ t, present: true, faceVisible: false, poseVisible: true, hands: [], headHeight: 0.3, ...over });
 
 test('居眠り:机に伏せて 20 秒で居眠り。顔の検出が時々ちらついても途切れない', () => {
   const a = new Analyzer(cfg);
