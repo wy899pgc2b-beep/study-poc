@@ -260,12 +260,17 @@ export function isEyesClosed(f, cal, cfg) {
   const earRatio = calEar && f.ear != null ? f.ear / calEar : null;
   const lookingFurtherDown = cal?.pitchDeg != null && f.pitchDeg - cal.pitchDeg > cfg.lookingDownExtraDeg;
 
-  // 深くうつむいているときは、まぶたが下がって見えるので、より厳しい基準で判定する
-  if (earRatio != null && earRatio < (lookingFurtherDown ? cfg.earRatioStrongWhenDown : cfg.earRatioStrong)) return true;
-  if (lookingFurtherDown) return false;
-  if (f.blink != null && f.blink >= blinkThr) {
-    return earRatio == null || earRatio < cfg.earRatioWithBlink;
-  }
+  // 深くうつむいているときは、まぶたが下がって見えるので、目の形がはっきり閉じているときだけ閉眼とする
+  if (lookingFurtherDown) return earRatio != null && earRatio < cfg.earRatioStrongWhenDown;
+  // 目の形(EAR)がはっきり小さい
+  if (earRatio != null && earRatio < cfg.earRatioAlone) return true;
+  if (f.blink == null) return earRatio != null && earRatio < cfg.earRatioStrong;
+  // 目の形がやや小さく、閉じ具合もやや高い(4 回目:閉じ具合が基準の境目でちらついた)。
+  // 目の形だけでは判定しない(7 回目:低い位置のカメラでは、読むだけで EAR 比が 0.6〜0.75 に下がった)
+  const blinkWithEar = Math.max(blinkThr - cfg.blinkSlackWithEar, cfg.blinkMinWithEar);
+  if (earRatio != null && earRatio < cfg.earRatioStrong && f.blink >= blinkWithEar) return true;
+  // 閉じ具合が高く、目の形も基準より小さい
+  if (f.blink >= blinkThr) return earRatio == null || earRatio < cfg.earRatioWithBlink;
   return false;
 }
 
@@ -374,6 +379,7 @@ export class Analyzer {
   }
 
   // 条件が続いた時間を測る。gapSec 以内の途切れ(検出のちらつき)は続いているとみなす。
+  // 途切れている間は時間を伸ばさない(0.6 秒触って 0.4 秒離れたのを「1 秒触った」としない)
   sustainedGap(key, cond, t, gapSec) {
     const g = (this.gapTimers ??= {});
     if (cond) {
@@ -382,7 +388,7 @@ export class Analyzer {
     } else if (g[key] && (t - g[key].last) / 1000 > gapSec) {
       delete g[key];
     }
-    return g[key] ? (t - g[key].start) / 1000 : 0;
+    return g[key] ? (g[key].last - g[key].start) / 1000 : 0;
   }
 
   // 条件が続いた時間を測る。続いている秒数を返す(条件が偽なら 0)。
@@ -451,17 +457,24 @@ export class Analyzer {
     const closedRawSec = this.sustainedGap('closedRaw', closed, t, cfg.closedGapSec);
 
     // --- 頭のうつむき具合(設計書 4.9)
-    const headRatio = cal?.headHeight && f.headHeight != null ? f.headHeight / cal.headHeight : null;
-    const headLow = headRatio != null ? headRatio < cfg.headLowRatio : !!f.headLow;
-    // 頭頂部の見える割合(髪 ÷ (髪 + 顔の肌))のキャリブレーション時からの増え方。うつむくほど大きい
     const seg = f.seg ?? this.lastSeg;
     if (f.seg) this.lastSeg = f.seg;
+    // 髪の面積がキャリブレーション時より大きく減っていれば、頭は下がっていない(横や後ろを向いた)。
+    // そのときは上半身の特徴点による「頭が低い」を使わない(7 回目:横向きに置いて横を向くと、肩からの頭の高さが −1.0 と出て
+    // 「うつむいている」「伏せている」と判定され、よそ見を見逃した。うつむく・伏せるときは髪の面積が増える)
+    const hairShrunk =
+      seg?.hairFrac != null && cal?.hairFrac >= cfg.segMinHairFrac && seg.hairFrac < cal.hairFrac * cfg.hairShrinkRatio;
+    const rawHeadRatio = cal?.headHeight && f.headHeight != null ? f.headHeight / cal.headHeight : null;
+    const headRatio = hairShrunk ? null : rawHeadRatio;
+    const poseHeadLow = !hairShrunk && !!f.headLow; // 頭の高さの比が取れないときの目安
+    const headLow = headRatio != null ? headRatio < cfg.headLowRatio : poseHeadLow;
+    // 頭頂部の見える割合(髪 ÷ (髪 + 顔の肌))のキャリブレーション時からの増え方。うつむくほど大きい
     const crownDelta = seg?.crownRatio != null && cal?.crownRatio != null ? seg.crownRatio - cal.crownRatio : null;
     // 頭頂部の割合でうつむきを判断するのは、正面に立てたときだけ(5 回目:平置きでは、うつむいても割合は変わらず、横を向くと増えた。
-    // 斜め置きでの変わり方はまだ分からないので、記録だけして判断には使わない)
+    // 7 回目:横向きに立てかけると、前に傾いて目を閉じても +0.01 しか増えなかった。ほかの置き方では記録だけする)
     const lookingDown =
       (headRatio != null && headRatio < cfg.headDownRatio) ||
-      (this.setup === 'stand' && crownDelta != null && crownDelta > cfg.crownBowDelta);
+      (this.setup === 'stand' && !hairShrunk && crownDelta != null && crownDelta > cfg.crownBowDelta);
     // 顔も上半身も見つからなくても、頭(髪)が大きく映っていれば席にいる(3 回目:机に伏せると上半身も検出できず「離席」になった)
     const segHead =
       seg != null && cal?.hairFrac && cal?.personFrac
@@ -527,9 +540,12 @@ export class Analyzer {
       this.sleepLevel = level;
     }
 
-    // --- 癖(設計書 4.7):指先の位置で判定する
+    // --- 癖(設計書 4.7):指先の位置で判定する。手の検出のちらつきで途切れないよう、短い途切れは許す
     let habit = null;
     let handFaceDist = null;
+    let onHead = false;
+    let onFace = false;
+    let chinRest = false;
     if (f.faceVisible && f.hands.length) {
       const b = f.faceBox;
       const w = b.maxX - b.minX;
@@ -540,21 +556,17 @@ export class Analyzer {
       handFaceDist = Math.min(
         ...tips.map((p) => Math.hypot(Math.max(b.minX - p.x, 0, p.x - b.maxX), Math.max(b.minY - p.y, 0, p.y - b.maxY)) / (w || 1)),
       );
-      const onHead = tips.some((p) => inX(p) && p.y < b.minY + h * 0.15 && p.y > b.minY - h * 0.6);
-      const onFace = tips.some((p) => inX(p) && p.y >= b.minY + h * 0.15 && p.y < f.chin.y);
+      onHead = tips.some((p) => inX(p) && p.y < b.minY + h * 0.15 && p.y > b.minY - h * 0.6);
+      onFace = tips.some((p) => inX(p) && p.y >= b.minY + h * 0.15 && p.y < f.chin.y);
       const underChin = [...tips, ...knuckles].some((p) => inX(p) && p.y >= f.chin.y - h * 0.1 && p.y < f.chin.y + h * 0.3);
-      const still = handSpeed < cfg.chinRestMaxSpeed;
-      const chinSec = this.sustained('chin', underChin && still, t);
-      const headSec = this.sustained('head', onHead, t);
-      const faceSec = this.sustained('face', onFace && !(underChin && still), t);
-      if (chinSec >= cfg.chinRestSec) habit = 'chin_rest';
-      else if (headSec >= cfg.habitTouchSec) habit = 'habit_head';
-      else if (faceSec >= cfg.habitTouchSec) habit = 'habit_face';
-    } else {
-      this.sustained('chin', false, t);
-      this.sustained('head', false, t);
-      this.sustained('face', false, t);
+      chinRest = underChin && handSpeed < cfg.chinRestMaxSpeed;
     }
+    const chinSec = this.sustainedGap('habitChin', chinRest, t, cfg.habitGapSec);
+    const headSec = this.sustainedGap('habitHead', onHead, t, cfg.habitGapSec);
+    const faceSec = this.sustainedGap('habitFace', onFace && !chinRest, t, cfg.habitGapSec);
+    if (chinSec >= cfg.chinRestSec) habit = 'chin_rest';
+    else if (headSec >= cfg.habitTouchSec) habit = 'habit_head';
+    else if (faceSec >= cfg.habitTouchSec) habit = 'habit_face';
     if (habit) {
       const last = this.lastHabitAt[habit];
       if (last == null || (t - last) / 1000 > cfg.habitMergeSec) events.push({ type: habit, t });
@@ -564,7 +576,7 @@ export class Analyzer {
     // --- 姿勢(設計書 4.9)
     const eyeDeskCm = estimateEyeDeskCm(f, cal);
     // 顔を机に近づけすぎると顔の特徴点が取れなくなる(2 回目の実機検証)。そのときは肩に対する頭の低さで判定する
-    const headDropped = !f.faceVisible && f.poseVisible && (headRatio != null ? headRatio < cfg.headCloseRatio : !!f.headLow);
+    const headDropped = !f.faceVisible && f.poseVisible && (headRatio != null ? headRatio < cfg.headCloseRatio : poseHeadLow);
     // 本人の基準(キャリブレーション時の距離)より一定の割合以上近づいたら「近すぎ」(設計書 3.9、決定事項 D-7)
     const eyeDeskThresholdCm = cal?.measuredEyeDeskCm ? cal.measuredEyeDeskCm * (1 - cfg.eyeDeskCloseRatio) : null;
     const tooClose = (eyeDeskCm != null && eyeDeskThresholdCm != null && eyeDeskCm < eyeDeskThresholdCm) || headDropped;
@@ -630,7 +642,8 @@ export class Analyzer {
         segHead: segHead ? 1 : 0,
         covering: covering ? 1 : 0,
         poseVisible: f.poseVisible ? 1 : 0,
-        headRatio,
+        headRatio: rawHeadRatio,
+        hairShrunk: hairShrunk ? 1 : 0,
         slouchRel: cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null,
       },
     };

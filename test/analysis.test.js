@@ -508,9 +508,15 @@ test('よそ見:平置きでは頭頂部の割合でうつむきを判断しな�
   const flat = new Analyzer(cfg, { setup: 'flat' });
   flat.setCalibration(cal);
   assert.equal(run(flat, 0, 5, turned).last.state, 'lookaway');
+  // 正面に立てたときは、頭頂部の割合が増えれば「うつむいている」
+  const bowed = (t) => lostFace(t, { headHeight: 1.13, seg: { crownRatio: 0.73, hairFrac: 0.07, faceSkinFrac: 0.01, personFrac: 0.25 } });
   const stand = new Analyzer(cfg, { setup: 'stand' });
   stand.setCalibration(cal);
-  assert.notEqual(run(stand, 0, 5, turned).last.state, 'lookaway');
+  assert.notEqual(run(stand, 0, 5, bowed).last.state, 'lookaway');
+  // …ただし髪の面積が大きく減っていれば(7 回目以降)、正面に立てたときも横を向いたとみなす
+  const stand2 = new Analyzer(cfg, { setup: 'stand' });
+  stand2.setCalibration(cal);
+  assert.equal(run(stand2, 0, 5, turned).last.state, 'lookaway');
 });
 
 test('居眠り:平置きのスマホの上に伏せて顔がカメラを覆うと、20 秒で居眠り(5 回目の実機検証の不具合)', () => {
@@ -562,4 +568,66 @@ test('端末の向き:縦・横・平置きを判定する', async () => {
   assert.equal(deviceIsLandscape(0, -60), true); // 横向きで後ろに 30° 寝かせる
   assert.equal(deviceIsLandscape(60, 0), false); // 縦向きで後ろに 30° 寝かせる
   assert.equal(deviceIsLandscape(0, 0), null); // 平置き
+});
+
+// 7 回目の実機検証(横向きに立てかける)のキャリブレーション値
+const CAL7 = { ...CAL, blink: 0.238, ear: 0.203, pitchDeg: 19.1, headHeight: 0.452, hairFrac: 0.051, personFrac: 0.423, crownRatio: 0.534 };
+
+test('閉眼:7 回目(横向き)の読む・書くときの値は開眼、目を閉じたときの値は閉眼', () => {
+  const ear = (ratio) => CAL7.ear * ratio;
+  // 読む:EAR 比 0.75(中央値)・0.59(10%)、閉じ具合 0.36(中央値)・0.44(90%)。いつもより 6° うつむく
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 25, blink: 0.36, ear: ear(0.747) }), CAL7, cfg), false);
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 25, blink: 0.444, ear: ear(0.587) }), CAL7, cfg), false);
+  // 書く:EAR 比 0.72、閉じ具合 0.44(90%)
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 23.5, blink: 0.438, ear: ear(0.718) }), CAL7, cfg), false);
+  // 顔を上げて目を閉じる:EAR 比 0.20(中央値)・0.35(90%)、閉じ具合 0.65
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 4.5, blink: 0.648, ear: ear(0.202) }), CAL7, cfg), true);
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 4.5, blink: 0.578, ear: ear(0.351) }), CAL7, cfg), true);
+  // 前に傾いて目を閉じる:EAR 比 0.29、閉じ具合 0.66
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 27.2, blink: 0.658, ear: ear(0.291) }), CAL7, cfg), true);
+});
+
+test('居眠り:7 回目(横向き)で読んでいるだけなら、25 秒続いても居眠り・うとうとにしない', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(CAL7);
+  // EAR 比 0.59〜0.75、閉じ具合 0.30〜0.44 のあいだで揺れる
+  const reading = (t) => {
+    const k = (Math.sin(t / 700) + 1) / 2;
+    return face(t, { pitchDeg: 25, blink: 0.3 + 0.14 * k, ear: CAL7.ear * (0.75 - 0.16 * k), headHeight: 0.35 });
+  };
+  const r = run(a, 0, 25, reading);
+  assert.ok(!r.events.some((e) => e.type === 'sleep' || e.type === 'drowsy'));
+  assert.equal(r.last.state, 'think');
+});
+
+test('よそ見:上半身の特徴点がずれて頭が肩より低く出ても、髪の面積が減っていれば横を向いたとみなす(7 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(CAL7);
+  // 横を向く:顔は見えず、肩からの頭の高さ −1.0、髪の面積 0.025(キャリブレーション時の半分)
+  const turned = (t) => lostFace(t, { headHeight: -0.46, headLow: true, seg: { crownRatio: 0.56, hairFrac: 0.025, faceSkinFrac: 0.02, personFrac: 0.275 } });
+  const r = run(a, 0, 5, turned);
+  assert.equal(r.last.state, 'lookaway');
+  assert.equal(r.last.metrics.hairShrunk, 1);
+  assert.equal(r.last.flags.tooClose, false);
+  // 机に伏せる:頭の高さは同じく負だが、髪が大きく映る → 20 秒で居眠り
+  const b = new Analyzer(cfg, { setup: 'landscape' });
+  b.setCalibration(CAL7);
+  const facedown = (t) => lostFace(t, { headHeight: -0.49, headLow: true, seg: { crownRatio: 0.88, hairFrac: 0.527, faceSkinFrac: 0.01, personFrac: 0.763 } });
+  const r2 = run(b, 0, 21, facedown);
+  assert.ok(r2.events.some((e) => e.type === 'sleep'));
+  assert.ok(!r2.events.some((e) => e.type === 'lookaway'));
+});
+
+test('癖:指先の検出が一瞬途切れても、触り続けていれば「頭を触る」と数える(7 回目の実機検証)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  // 0.6 秒ごとに 0.2 秒だけ手を見失う
+  const touching = (t) => face(t, { hands: t % 800 < 600 ? [hand(0.5, 0.1)] : [] });
+  const r = run(a, 0, 3, touching);
+  assert.ok(r.events.some((e) => e.type === 'habit_head'));
+  // 1 秒近く離れれば、触り続けたとはみなさない
+  const b = new Analyzer(cfg);
+  b.setCalibration(CAL);
+  const brief = (t) => face(t, { hands: t % 1600 < 800 ? [hand(0.5, 0.1)] : [] });
+  assert.ok(!run(b, 0, 6, brief).events.some((e) => e.type === 'habit_head'));
 });

@@ -352,6 +352,7 @@ function startGuide() {
   const guideSpeech = {
     stand: 'スマホの位置を合わせます。顔と肩が映るように置いてください',
     tilt: 'スマホの位置を合わせます。スマホを45度くらいに寝かせて、顔と手元が映るように置いてください',
+    landscape: 'スマホの位置を合わせます。スマホを横向きにして、少し後ろに傾けて立てかけ、顔と手元が映るように置いてください',
     flat: 'スマホの位置を合わせます。顔が映るように置いてください',
   };
   say(guideSpeech[S.opts.setup] ?? guideSpeech.stand, { interrupt: true });
@@ -369,19 +370,24 @@ function guideStep(f) {
     ['明るさが十分', !has('dark')],
     ['(任意)手元の手が映っている', f.hands.length > 0],
   ];
-  // 斜め置き:端末の傾きをその場で表示し、目安から外れていれば音声で知らせる(位置合わせは止めない)
+  // 斜め置き・横向き:端末の傾きをその場で表示し、目安から外れていれば音声で知らせる(位置合わせは止めない)
   const tilt = f.cameraTiltDeg;
-  if (S.opts.setup === 'tilt') {
-    const inRange = tilt != null && tilt >= TILT_RANGE_DEG.min && tilt <= TILT_RANGE_DEG.max;
-    const label = tilt == null ? '(任意)スマホの傾き:センサーを読めません' : `(任意)スマホの傾き ${Math.round(tilt)}°(目安 ${TILT_RANGE_DEG.min}〜${TILT_RANGE_DEG.max}°)`;
+  const range = TILT_RANGE_DEG[S.opts.setup];
+  if (range) {
+    const inRange = tilt != null && tilt >= range.min && tilt <= range.max;
+    const label = tilt == null ? '(任意)スマホの傾き:センサーを読めません' : `(任意)スマホの傾き ${Math.round(tilt)}°(目安 ${range.min}〜${range.max}°)`;
     items.push([label, inRange]);
     if (tilt != null && !inRange) {
-      say(tilt < TILT_RANGE_DEG.min ? 'スマホをもう少し寝かせてください' : 'スマホをもう少し起こしてください', { key: 'tilt', minIntervalSec: 30 });
+      say(tilt < range.min ? 'スマホをもう少し寝かせてください' : 'スマホをもう少し起こしてください', { key: 'tilt', minIntervalSec: 30 });
     }
   }
   // 横向きに置いたのに映像が縦のまま(画面の向きのロックがかかっている)と、顔や手を正しく検出できない
   const devLandscape = S.orientation ? deviceIsLandscape(S.orientation.beta, S.orientation.gamma) : null;
   const videoLandscape = video.videoWidth > video.videoHeight;
+  if (S.opts.setup === 'landscape' && devLandscape === false) {
+    items.push(['スマホが横向きになっていません', false]);
+    say('スマホを横向きにしてください', { key: 'landscape', minIntervalSec: 15 });
+  }
   if (devLandscape != null) {
     const match = devLandscape === videoLandscape;
     items.push([match ? `映像の向き:${videoLandscape ? '横' : '縦'}` : '映像の向きが合っていません(画面の向きのロックを解除してください)', match]);

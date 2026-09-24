@@ -13,12 +13,18 @@ export const DEFAULTS = {
 
   // 目の閉じ具合(設計書 4.8)
   // 実機検証で調整:3 回目 0.3 → 0.15、0.45 → 0.6。4 回目は顔を上げて目を閉じても閉じ具合 0.64(基準 0.55)・EAR 比 0.58 で、
-  // 境目でちらついたため 0.07・0.8 にした。読むときの EAR 比は 0.94 以上(2・4 回目)なので誤判定しにくい
+  // 境目でちらついたため 0.07・0.8 にした。
+  // 7 回目(横向きに立てかける):読む・書くときの EAR 比が 0.59〜0.75 まで下がり(閉じ具合は 0.44 以下)、居眠りと誤判定した。
+  // 目を閉じたときは EAR 比 0.20〜0.29・閉じ具合 0.58 以上。EAR 比だけで閉眼とするのは 0.5 未満に限り、
+  // 0.5〜0.8 は閉じ具合もやや高いときだけ閉眼とする
   blinkMarginOverCal: 0.07, // キャリブレーション時の閉じ具合 + この値 を「閉じている」とみなす
   blinkMin: 0.45,
   blinkMax: 0.8,
   earRatioWithBlink: 0.95, // 表情係数が高く、かつ EAR 比がこの値未満なら閉眼
-  earRatioStrong: 0.8, // EAR 比がこの値未満なら表情係数に関係なく閉眼
+  earRatioAlone: 0.5, // EAR 比がこの値未満なら表情係数に関係なく閉眼
+  earRatioStrong: 0.8, // EAR 比がこの値未満で、表情係数もやや高い(下の 2 つ)なら閉眼
+  blinkSlackWithEar: 0.1, // …「やや高い」= 閉眼の基準 − この値 以上
+  blinkMinWithEar: 0.5, // …かつこの値以上(7 回目:読むときの閉じ具合は 0.44 以下)
   earRatioStrongWhenDown: 0.45, // キャリブレーションより 15° 以上深くうつむいているときの基準
   closedGapSec: 1, // 閉眼の途切れがこの秒数以内なら、閉じたままとみなす
   lookingDownExtraDeg: 15, // キャリブレーションよりさらに下を向いているときは強い証拠だけで判定
@@ -43,6 +49,9 @@ export const DEFAULTS = {
   segPersonRatio: 0.4, // …かつ人の面積がキャリブレーション時のこの割合以上
   coverPersonFrac: 0.85, // 人が画面のこれ以上を占め、
   coverEyeDeskCm: 10, // 顔が見えないか目と机(カメラ)の距離がこれ未満なら、頭がカメラを覆っている(平置きで伏せた)
+  // 髪の面積がキャリブレーション時のこの割合未満なら、頭は下がっていない(横や後ろを向いた)とみなし、
+  // 上半身の特徴点による「頭が低い」を使わない。4〜7 回目:よそ見 0.30〜0.62、うつむく・伏せる 1.07 以上
+  hairShrinkRatio: 0.7,
 
   // 【試験中】前に傾いた居眠りの候補:うつむいたまま、頭も手もほとんど動かない状態が続く
   headMotionWindowSec: 2,
@@ -60,6 +69,7 @@ export const DEFAULTS = {
 
   // 癖(設計書 4.7)
   habitTouchSec: 1,
+  habitGapSec: 0.5, // 手の検出のちらつき(この秒数以内の途切れ)は触り続けているとみなす
   chinRestSec: 5,
   chinRestMaxSpeed: 0.3, // 頬杖とみなす手の速さの上限
   habitMergeSec: 5,
@@ -87,8 +97,8 @@ export const DEFAULTS = {
   interruptionPenaltyMax: 10,
 };
 
-// 設置スタイルごとのカメラの上向きの傾き(度)。平置きは真上を向く。
-export const SETUP_TILT_DEG = { stand: 0, tilt: 45, flat: 90 };
+// 設置スタイルごとのカメラの上向きの傾き(度)。平置きは真上を向く。横向きに立てかけると 7 回目は 23°
+export const SETUP_TILT_DEG = { stand: 0, tilt: 45, landscape: 20, flat: 90 };
 
-// 斜め置きの目安の角度(カメラが水平より上を向く角度)
-export const TILT_RANGE_DEG = { min: 35, max: 55 };
+// 置き方ごとの目安の角度(カメラが水平より上を向く角度)
+export const TILT_RANGE_DEG = { tilt: { min: 35, max: 55 }, landscape: { min: 10, max: 35 } };

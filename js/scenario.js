@@ -34,6 +34,7 @@ export const DIAGNOSTIC_METRICS = [
   'covering',
   'handOnFace',
   'poseVisible',
+  'hairShrunk',
   'cameraTiltDeg',
 ];
 
