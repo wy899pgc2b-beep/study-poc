@@ -189,7 +189,7 @@ export function extractFeatures(frame, cfg) {
 }
 
 /** 設置位置ガイドの判定(設計書 3.4)。 */
-export function checkFraming(f) {
+export function checkFraming(f, { setup = 'stand' } = {}) {
   const issues = [];
   if (!f.faceVisible) {
     issues.push({ code: 'no_face', message: '顔が映っていません', speech: '顔が映っていません。スマホの位置を調整してください' });
@@ -203,7 +203,8 @@ export function checkFraming(f) {
     if (size < 0.1) issues.push({ code: 'too_far', message: 'スマホが遠すぎます', speech: 'スマホを少し近づけてください' });
     if (size > 0.45) issues.push({ code: 'too_close', message: 'スマホが近すぎます', speech: 'スマホを少し遠ざけてください' });
   }
-  if (!f.poseVisible) {
+  // 平置き(下から撮影)では肩が映らないことが多いので、肩は求めない
+  if (!f.poseVisible && setup !== 'flat') {
     issues.push({ code: 'no_shoulders', message: '肩が映っていません', speech: '肩まで映るように、スマホを少し遠ざけてください' });
   }
   if (f.brightness != null && f.brightness < 50) {
@@ -259,8 +260,9 @@ export function isEyesClosed(f, cal, cfg) {
   const earRatio = calEar && f.ear != null ? f.ear / calEar : null;
   const lookingFurtherDown = cal?.pitchDeg != null && f.pitchDeg - cal.pitchDeg > cfg.lookingDownExtraDeg;
 
-  if (earRatio != null && earRatio < cfg.earRatioStrong) return true;
-  if (lookingFurtherDown) return false; // 深くうつむいているときは強い証拠(上)だけで判定
+  // 深くうつむいているときは、まぶたが下がって見えるので、より厳しい基準で判定する
+  if (earRatio != null && earRatio < (lookingFurtherDown ? cfg.earRatioStrongWhenDown : cfg.earRatioStrong)) return true;
+  if (lookingFurtherDown) return false;
   if (f.blink != null && f.blink >= blinkThr) {
     return earRatio == null || earRatio < cfg.earRatioWithBlink;
   }
@@ -332,8 +334,6 @@ export class Analyzer {
     this.prevNose = null;
     this.lastSeg = null;
     this.perclos = [];
-    this.closedSince = null;
-    this.closedRawSince = null;
     this.lookAwaySince = null;
     this.inLookAway = false;
     this.absentSince = null;
@@ -406,17 +406,12 @@ export class Analyzer {
     this.perclos = this.perclos.filter((s) => t - s.t <= cfg.perclosWindowSec * 1000);
     const totalP = this.perclos.reduce((s, x) => s + x.dt, 0);
     const perclos = totalP >= cfg.perclosMinObservedSec ? this.perclos.reduce((s, x) => s + (x.closed ? x.dt : 0), 0) / totalP : 0;
-    if (closed && !writing) {
-      if (this.closedSince == null) this.closedSince = t;
-    } else {
-      this.closedSince = null;
-    }
-    const closedSec = this.closedSince == null ? 0 : (t - this.closedSince) / 1000;
+    // 閉眼の判定は境目の値でちらつく(4 回目:閉じたまま 1 秒だけ「開いた」と出て、10 秒の計測がやり直しになった)。
+    // 短い途切れは閉じたままとみなす
+    const closedSec = this.sustainedGap('closed', closed && !writing, t, cfg.closedGapSec);
     // 居眠りは手の動きに関係なく、目を閉じた時間で判定する(3 回目:手を組んだのを書く動作と誤判定し、居眠りを見逃した)。
     // 書いている間は「うとうと」にだけしない
-    if (closed) this.closedRawSince ??= t;
-    else this.closedRawSince = null;
-    const closedRawSec = this.closedRawSince == null ? 0 : (t - this.closedRawSince) / 1000;
+    const closedRawSec = this.sustainedGap('closedRaw', closed, t, cfg.closedGapSec);
 
     // --- 頭のうつむき具合(設計書 4.9)
     const headRatio = cal?.headHeight && f.headHeight != null ? f.headHeight / cal.headHeight : null;

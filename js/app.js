@@ -348,18 +348,18 @@ function startGuide() {
   $('event-log').replaceChildren();
   $('btn-away').textContent = '離席';
   show('camera');
-  say('スマホの位置を合わせます。顔と肩が映るように置いてください', { interrupt: true });
+  say(S.opts.setup === 'flat' ? 'スマホの位置を合わせます。顔が映るように置いてください' : 'スマホの位置を合わせます。顔と肩が映るように置いてください', { interrupt: true });
   startLoop();
 }
 
 function guideStep(f) {
-  const r = checkFraming(f);
+  const r = checkFraming(f, { setup: S.opts.setup });
   const has = (code) => r.issues.some((i) => i.code === code);
   const items = [
     ['顔が映っている', !has('no_face')],
     ['顔が画面の中央付近にある', f.faceVisible && !has('off_center')],
     ['スマホとの距離がちょうどよい', f.faceVisible && !has('too_far') && !has('too_close')],
-    ['肩まで映っている', !has('no_shoulders')],
+    [S.opts.setup === 'flat' ? '(任意)肩まで映っている' : '肩まで映っている', f.poseVisible],
     ['明るさが十分', !has('dark')],
     ['(任意)手元の手が映っている', f.hands.length > 0],
   ];

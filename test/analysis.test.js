@@ -461,3 +461,33 @@ test('姿勢:顔を近づけすぎて顔が取れないときは、肩からの�
   b.setCalibration({ ...CAL, headHeight: 1 });
   assert.equal(run(b, 0, 2, (t) => lostFace(t, { headHeight: 0.95 })).last.flags.tooClose, false);
 });
+
+test('閉眼:4 回目の実機検証の値(顔を上げて目を閉じる)は閉眼、読むときの値は開眼', () => {
+  const cal = { ...CAL, blink: 0.551, ear: 0.1, pitchDeg: 24 };
+  // 目を閉じる:閉じ具合 0.64、EAR 比 0.58
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 22, blink: 0.64, ear: 0.058 }), cal, cfg), true);
+  // 閉じ具合がやや低くても EAR 比 0.75 なら閉眼
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 22, blink: 0.55, ear: 0.075 }), cal, cfg), true);
+  // 読む:閉じ具合 0.52(90%)、EAR 比 1.19(10%)
+  assert.equal(isEyesClosed(face(0, { pitchDeg: 28, blink: 0.52, ear: 0.119 }), cal, cfg), false);
+});
+
+test('居眠り:閉眼の判定が 1 秒ちらついても、10 秒の計測を続ける(4 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  // 3 秒ごとに 0.6 秒だけ「開いた」と判定される
+  const flicker = (t) => (t % 3000 < 600 ? face(t) : face(t, { blink: 0.9, ear: 0.08 }));
+  const r = run(a, 0, 12, flicker);
+  assert.ok(r.events.some((e) => e.type === 'sleep'));
+  // 2 秒以上開いていれば計測はやり直し
+  const b = new Analyzer(cfg);
+  b.setCalibration(CAL);
+  const open2s = (t) => (t % 6000 < 2400 ? face(t) : face(t, { blink: 0.9, ear: 0.08 }));
+  assert.ok(!run(b, 0, 12, open2s).events.some((e) => e.type === 'sleep'));
+});
+
+test('設置ガイド:平置きでは肩が映っていなくてもよい', () => {
+  const f = { faceVisible: true, poseVisible: false, brightness: 120, width: 720, height: 1280, faceBox: { minX: 0.4, maxX: 0.6, minY: 0.3, maxY: 0.5 }, faceWidthNorm: 0.2 };
+  assert.equal(checkFraming(f).ok, false);
+  assert.equal(checkFraming(f, { setup: 'flat' }).ok, true);
+});
