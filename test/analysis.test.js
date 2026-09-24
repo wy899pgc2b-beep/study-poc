@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DEFAULTS } from '../js/config.js';
 import {
   Analyzer,
+  cameraTiltFromOrientation,
   SessionRecorder,
   checkFraming,
   computeCalibration,
@@ -281,4 +282,84 @@ test('設置ガイド:顔・肩・明るさの条件', () => {
   assert.equal(ok.ok, true);
   const far = checkFraming({ faceVisible: true, poseVisible: true, width: 720, height: 1280, faceBox: { minX: 0.48, maxX: 0.52, minY: 0.2, maxY: 0.25 }, faceWidthNorm: 0.04 });
   assert.deepEqual(far.issues.map((i) => i.code), ['too_far']);
+});
+
+// 再現性のある疑似乱数(検出のゆらぎを再現する)
+function rng(seed = 1) {
+  let x = seed;
+  return () => {
+    x = (x * 1103515245 + 12345) % 2147483648;
+    return x / 2147483648 - 0.5;
+  };
+}
+
+function jitterHand(cx, cy, amp, rand) {
+  const pts = Array.from({ length: 21 }, () => ({ x: cx + rand() * amp, y: cy + rand() * amp, z: 0 }));
+  return { pts, centroid: { x: cx, y: cy } };
+}
+
+test('作業:止まっている手が検出のゆらぎで動いて見えても、書いているとは判定しない(実機検証 1 回目の不具合)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  const rand = rng(7);
+  // 顔の幅 0.2 に対して ±0.004 程度のゆらぎ(旧しきい値 0.05 では「書いている」になっていた)
+  const r = run(a, 0, 5, (t) => face(t, { hands: [jitterHand(0.5, 0.85, 0.008, rand)] }));
+  assert.equal(r.last.state, 'think');
+});
+
+test('作業:キャリブレーションで測ったゆらぎが大きい人は、書く動作の下限を引き上げる', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration({ ...CAL, handNoise: 0.2 });
+  const r = run(a, 0, 2, (t) => face(t));
+  assert.equal(r.last.metrics.writeMin, 0.5);
+});
+
+test('キャリブレーション:手のゆらぎ(handNoise)と端末の傾きを記録する', () => {
+  const rand = rng(3);
+  const feats = [];
+  for (let t = 0; t <= 3000; t += 200) feats.push(face(t, { hands: [jitterHand(0.5, 0.85, 0.008, rand)], cameraTiltDeg: 12, camDistCm: 50, verticalOffsetCm: -5 }));
+  const cal = computeCalibration(feats, { measuredEyeDeskCm: 35, tiltDeg: 0, cfg });
+  assert.ok(cal.handNoise > 0 && cal.handNoise < cfg.writeSpeedMin);
+  assert.equal(cal.tiltDeg, 12);
+  assert.equal(cal.tiltFromSensor, true);
+  assert.ok(Math.abs(estimateEyeDeskCm(feats[0], cal) - 35) < 1e-9);
+});
+
+test('よそ見:手が動いていても、横を向いていればよそ見', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  const r = run(a, 0, 4, (t) => face(t, { yawDeg: 40, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] }));
+  assert.equal(r.last.state, 'lookaway');
+});
+
+test('居眠り:手が動いていると誤検出されても、20 秒目を閉じていれば居眠り', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  const moving = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] });
+  assert.notEqual(run(a, 0, 15, moving).last.state, 'sleep');
+  assert.equal(run(a, 15200, 6, moving).last.state, 'sleep');
+});
+
+test('癖:頬杖(指先が頬、手のひらがあごの下)は 5 秒で頬杖。その前に「顔を触る」とは数えない', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  const chinHand = () => {
+    const pts = Array.from({ length: 21 }, () => ({ x: 0.52, y: 0.52, z: 0 })); // 手のひらはあごの下
+    for (const i of [4, 8, 12, 16, 20]) pts[i] = { x: 0.55, y: 0.42, z: 0 }; // 指先は頬
+    return { pts, centroid: { x: 0.53, y: 0.5 } };
+  };
+  const r = run(a, 0, 6, (t) => face(t, { hands: [chinHand()] }));
+  const types = r.events.map((e) => e.type).filter((x) => x.startsWith('habit') || x === 'chin_rest');
+  assert.deepEqual(types, ['chin_rest']);
+});
+
+test('端末の傾き:DeviceOrientation からカメラの上向きの角度を求める', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  assert.ok(near(cameraTiltFromOrientation(90, 0, 'front'), 0)); // 縦に立てる
+  assert.ok(near(cameraTiltFromOrientation(75, 0, 'front'), 15)); // 後ろに 15° 傾ける(画面がこちら向き)
+  assert.ok(near(cameraTiltFromOrientation(105, 0, 'back'), 15)); // 画面が向こう向きで後ろに傾ける
+  assert.ok(near(cameraTiltFromOrientation(0, 0, 'front'), 90)); // 平置き・画面が上
+  assert.ok(near(cameraTiltFromOrientation(180, 0, 'back'), 90)); // 平置き・画面が下
+  assert.ok(near(cameraTiltFromOrientation(0, 90, 'front'), 0)); // 横向きに立てる
+  assert.equal(cameraTiltFromOrientation(null, 0, 'front'), null);
 });

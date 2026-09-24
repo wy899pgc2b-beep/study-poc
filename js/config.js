@@ -24,16 +24,21 @@ export const DEFAULTS = {
   perclosDrowsy: 0.3,
   perclosMinObservedSec: 20, // これより短い観測では PERCLOS を使わない
   wakeOpenSec: 2, // 目を開けた状態がこの秒数続いたら目覚めたとみなす
+  sleepClosedSecAnyHands: 20, // 手が動いていても、これだけ長く目を閉じていれば居眠り
   faceDownSec: 30,
 
   // 手の動き(作業の判定):顔の幅を 1 とした速さ(1 秒あたり)
+  // 1 回目の実機検証(2026-09-24)で、0.05 では止まっている手も「書いている」と判定されたため引き上げた
   handWindowSec: 1.5,
-  writeSpeedMin: 0.05,
+  handSmoothing: 0.5, // 手の位置の平滑化(1 に近いほど平滑化が弱い)
+  writeSpeedMin: 0.15,
+  handNoiseFactor: 2.5, // キャリブレーションで測ったゆらぎの何倍を書く動作の下限にするか
   writeSpeedMax: 1.5,
 
   // 癖(設計書 4.7)
   habitTouchSec: 1,
   chinRestSec: 5,
+  chinRestMaxSpeed: 0.3, // 頬杖とみなす手の速さの上限
   habitMergeSec: 5,
 
   // 姿勢(設計書 4.9)

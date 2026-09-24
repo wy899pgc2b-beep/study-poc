@@ -5,6 +5,32 @@ export const TRANSITION_SEC = 5;
 
 const FLAG_LABELS = { habit: '癖を検出', tooClose: '近すぎと判定' };
 
+// しきい値の調整のため、場面ごとに記録する数値(結果の JSON に入る)
+export const DIAGNOSTIC_METRICS = ['handSpeed', 'writeMin', 'handsCount', 'handFaceDist', 'blink', 'earRatio', 'yawDev', 'pitchUp', 'eyeDeskCm', 'cameraTiltDeg'];
+
+function quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+/** 数値の分布(10%・中央値・90%)。 */
+export function metricStats(samples) {
+  const out = {};
+  for (const key of DIAGNOSTIC_METRICS) {
+    const v = samples
+      .map((s) => s.metrics?.[key])
+      .filter((x) => Number.isFinite(x))
+      .sort((a, b) => a - b);
+    if (!v.length) continue;
+    const r = (x) => Math.round(x * 1000) / 1000;
+    out[key] = { p10: r(quantile(v, 0.1)), median: r(quantile(v, 0.5)), p90: r(quantile(v, 0.9)), n: v.length };
+  }
+  return out;
+}
+
 export const SCENARIO = [
   {
     id: 'read',
@@ -12,8 +38,9 @@ export const SCENARIO = [
     speech: '教材を見下ろして、読んでください',
     sec: 25,
     graceSec: 3,
-    expect: { states: ['think', 'work'], minShare: 0.7 },
-    purpose: '下を向いて読んでいるときに、居眠りと誤判定しないか',
+    // 読んでいるときは手を止めているはずなので「思考」が多いこと。居眠りの誤判定はほぼ 0 であること
+    expect: { states: ['think'], minShare: 0.6, maxFalseSleep: 0.05 },
+    purpose: '下を向いて読んでいるときに、居眠りや作業と誤判定しないか',
   },
   {
     id: 'write',
@@ -99,7 +126,7 @@ export function evaluatePhase(phase, samples) {
   for (const s of used) share[s.state] = (share[s.state] || 0) + s.dt;
   for (const k of Object.keys(share)) share[k] = total > 0 ? share[k] / total : 0;
 
-  const result = { id: phase.id, label: phase.label, purpose: phase.purpose, seconds: total, share, notes: [] };
+  const result = { id: phase.id, label: phase.label, purpose: phase.purpose, seconds: total, share, notes: [], metrics: metricStats(used) };
   if (total < 3) {
     result.pass = null;
     result.notes.push('判定できたフレームが少なすぎます');
@@ -129,9 +156,10 @@ export function evaluatePhase(phase, samples) {
     result.pass = flagged >= e.minShare;
   }
 
-  if (phase.id === 'read') {
+  if (e.maxFalseSleep != null) {
     const falseSleep = (share.drowsy || 0) + (share.sleep || 0);
     result.notes.push(`居眠りの誤判定 ${Math.round(falseSleep * 100)}%`);
+    if (falseSleep > e.maxFalseSleep) result.pass = false;
   }
   return result;
 }

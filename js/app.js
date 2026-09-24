@@ -1,7 +1,16 @@
 // 技術検証アプリの画面の流れ:設定 → 読み込み → 設置ガイド → キャリブレーション → 学習中 → 結果
 
 import { DEFAULTS, SETUP_TILT_DEG } from './config.js';
-import { Analyzer, SessionRecorder, STATE_LABELS, checkFraming, computeCalibration, extractFeatures, scoreMinute } from './analysis.js';
+import {
+  Analyzer,
+  SessionRecorder,
+  STATE_LABELS,
+  cameraTiltFromOrientation,
+  checkFraming,
+  computeCalibration,
+  extractFeatures,
+  scoreMinute,
+} from './analysis.js';
 import { SCENARIO, evaluatePhase, phaseAt } from './scenario.js';
 import { createVision } from './vision.js';
 import { Voice } from './voice.js';
@@ -78,18 +87,29 @@ function readOptions(form) {
   return { opts, cfg };
 }
 
-// iOS では動きセンサーの許可を、タップの処理の中で求める必要がある
-function requestMotionPermission() {
+// iOS では動きセンサーの許可を、タップの処理の中で求める必要がある。
+// 動き(持ち上げの検知)と向き(カメラの傾き。目と机の距離の推定に使う)の両方を求める。
+function requestSensorPermission(EventClass) {
   try {
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-      return DeviceMotionEvent.requestPermission()
+    if (typeof EventClass === 'undefined') return Promise.resolve(false);
+    if (typeof EventClass.requestPermission === 'function') {
+      return EventClass.requestPermission()
         .then((r) => r === 'granted')
         .catch(() => false);
     }
-    return Promise.resolve(typeof DeviceMotionEvent !== 'undefined');
+    return Promise.resolve(true);
   } catch {
     return Promise.resolve(false);
   }
+}
+
+function onOrientation(e) {
+  S.orientation = { beta: e.beta, gamma: e.gamma };
+}
+
+function currentCameraTilt() {
+  if (!S.orientation) return null;
+  return cameraTiltFromOrientation(S.orientation.beta, S.orientation.gamma, S.opts.camera);
 }
 
 async function startCamera(camera) {
@@ -134,7 +154,8 @@ $('setup-form').addEventListener('submit', async (e) => {
   S.opts = opts;
   S.cfg = cfg;
   S.voice.unlock(); // 音声オフでも居眠りアラームは鳴らすため、常に有効にする
-  const motion = requestMotionPermission();
+  const motion = requestSensorPermission(window.DeviceMotionEvent);
+  const orientation = requestSensorPermission(window.DeviceOrientationEvent);
   show('loading');
   try {
     $('loading-text').textContent = 'カメラを起動中…';
@@ -146,6 +167,8 @@ $('setup-form').addEventListener('submit', async (e) => {
     }
     S.motionGranted = await motion;
     if (S.motionGranted) window.addEventListener('devicemotion', onMotion);
+    S.orientation = null;
+    if (await orientation) window.addEventListener('deviceorientation', onOrientation);
     await keepAwake();
     startGuide();
   } catch (err) {
@@ -210,7 +233,7 @@ function processFrame() {
   // 上半身は 2 回に 1 回だけ解析するので、直前の結果を使い回す(遅い端末でも途切れないよう、間隔に合わせて猶予を延ばす)
   const pose = withPose ? det.pose : det.t - S.lastPoseT < Math.max(1000, 2.5 * interval) ? S.lastPose : null;
   if (S.frameNo % 10 === 1) S.brightness = measureBrightness();
-  const frame = { t: det.t, width: video.videoWidth, height: video.videoHeight, face: det.face, hands: det.hands, pose, brightness: S.brightness };
+  const frame = { t: det.t, width: video.videoWidth, height: video.videoHeight, face: det.face, hands: det.hands, pose, brightness: S.brightness, cameraTiltDeg: currentCameraTilt() };
   const f = extractFeatures(frame, S.cfg);
 
   const ms = performance.now() - t0;
@@ -328,11 +351,11 @@ function startCalibration() {
   S.calibFeatures = [];
   S.calibStartAt = performance.now() + 3500; // 音声の案内を聞き終わるのを待つ
   $('phase-label').textContent = 'キャリブレーション';
-  $('guide-title').innerHTML = '<b>正しい姿勢で教材を見てください</b>';
+  $('guide-title').innerHTML = '<b>正しい姿勢で、手を止めて教材を見てください</b>';
   $('guide-list').replaceChildren();
   $('skip-guide').hidden = true;
   S.voice.beep({ freq: 784 });
-  say('位置はOKです。正しい姿勢で、教材を見てください', { interrupt: true });
+  say('位置はOKです。正しい姿勢で、手を止めて、教材を見てください', { interrupt: true });
 }
 
 function calibrationStep(f) {
@@ -341,7 +364,7 @@ function calibrationStep(f) {
   const left = Math.ceil(3 - (f.t - S.calibStartAt) / 1000);
   $('guide-list').replaceChildren(Object.assign(document.createElement('li'), { textContent: `記録中… あと ${Math.max(0, left)} 秒` }));
   if (f.t - S.calibStartAt < 3000) return;
-  const cal = computeCalibration(S.calibFeatures, { measuredEyeDeskCm: S.opts.eyeDesk, tiltDeg: SETUP_TILT_DEG[S.opts.setup] });
+  const cal = computeCalibration(S.calibFeatures, { measuredEyeDeskCm: S.opts.eyeDesk, tiltDeg: SETUP_TILT_DEG[S.opts.setup], cfg: S.cfg });
   if (!cal) {
     say('顔が映っていなかったため、もう一度位置を合わせます', { interrupt: true });
     startGuide();
@@ -467,7 +490,7 @@ function scenarioStep(elapsed, dt, res, kind) {
     S.inTransition = pa.inTransition;
   }
   if (!pa.inTransition) {
-    (S.samples[pa.phase.id] ??= []).push({ phaseElapsed: pa.phaseElapsed, dt, state: res ? res.state : kind, away: kind === 'away', flags: res?.flags ?? {} });
+    (S.samples[pa.phase.id] ??= []).push({ phaseElapsed: pa.phaseElapsed, dt, state: res ? res.state : kind, away: kind === 'away', flags: res?.flags ?? {}, metrics: res?.metrics ?? null });
   }
   $('scenario-step').textContent = `${pa.index + 1} / ${SCENARIO.length}`;
   $('scenario-text').textContent = pa.inTransition ? `次:${pa.phase.label}(指示を聞いてください)` : `${pa.phase.label} — あと ${Math.ceil(pa.phase.sec - pa.phaseElapsed)} 秒`;
@@ -551,6 +574,7 @@ function stopAll() {
   S.wakeLock?.release?.().catch(() => {});
   S.wakeLock = null;
   window.removeEventListener('devicemotion', onMotion);
+  window.removeEventListener('deviceorientation', onOrientation);
   S.dark = false;
   $('dark-overlay').hidden = true;
   stopCamera();

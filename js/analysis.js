@@ -6,6 +6,8 @@ const RIGHT_EYE = { outer: 263, inner: 362, top: [385, 387], bottom: [380, 373] 
 const FACE = { forehead: 10, chin: 152, leftOuter: 33, rightOuter: 263 };
 const IRIS = { left: [469, 470, 471, 472], right: [474, 475, 476, 477] };
 const POSE = { nose: 0, leftEye: 2, rightEye: 5, leftShoulder: 11, rightShoulder: 12 };
+const HAND_TIPS = [4, 8, 12, 16, 20];
+const HAND_KNUCKLES = [0, 5, 9, 13, 17];
 
 export const STATES = ['work', 'think', 'lookaway', 'drowsy', 'sleep', 'absent'];
 export const STATE_LABELS = {
@@ -54,6 +56,17 @@ export function focalLengthPx(width, height, fovLongSideDeg) {
   return Math.max(width, height) / 2 / Math.tan(rad(fovLongSideDeg) / 2);
 }
 
+/**
+ * 端末の傾き(DeviceOrientation の beta・gamma)から、カメラが水平より何度上を向いているかを求める。
+ * 画面の法線(フロントカメラの向き)の上向き成分は cos(beta)·cos(gamma)。バックカメラは逆向き。
+ */
+export function cameraTiltFromOrientation(betaDeg, gammaDeg, camera) {
+  if (!Number.isFinite(betaDeg) || !Number.isFinite(gammaDeg)) return null;
+  const up = clamp(Math.cos(rad(betaDeg)) * Math.cos(rad(gammaDeg)), -1, 1);
+  const elevation = deg(Math.asin(up));
+  return camera === 'back' ? -elevation : elevation;
+}
+
 // カメラから見た目の高さ(cm)。カメラが上に tiltDeg 傾いているとき、目がカメラよりどれだけ上にあるか。
 export function heightAboveCameraCm({ depthCm, verticalOffsetCm }, tiltDeg) {
   const t = rad(tiltDeg);
@@ -72,6 +85,7 @@ export function extractFeatures(frame, cfg) {
     width: W,
     height: H,
     brightness: frame.brightness ?? null,
+    cameraTiltDeg: frame.cameraTiltDeg ?? null,
     faceVisible: false,
     poseVisible: false,
     hands: (frame.hands || []).map((pts) => {
@@ -184,13 +198,26 @@ export function checkFraming(f) {
  * キャリブレーション(設計書 4.12)。正しい姿勢で教材を見ている数秒間の特徴量から基準値を作る。
  * measuredEyeDeskCm:ユーザーが実際に測った目と机の距離。カメラの高さの推定に使う。
  */
-export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg }) {
+export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg, cfg }) {
   const faces = features.filter((f) => f.faceVisible);
   if (faces.length < 3) return null;
+  // 端末の傾きが取れていればそれを使い、取れなければ設置スタイルの既定値を使う
+  const tiltOf = (f) => f.cameraTiltDeg ?? tiltDeg;
   const heights = faces
     .filter((f) => Number.isFinite(f.camDistCm))
-    .map((f) => heightAboveCameraCm({ depthCm: f.camDistCm, verticalOffsetCm: f.verticalOffsetCm }, tiltDeg));
+    .map((f) => heightAboveCameraCm({ depthCm: f.camDistCm, verticalOffsetCm: f.verticalOffsetCm }, tiltOf(f)));
   const h = median(heights);
+  // 手を止めているときの「見かけの速さ」(検出のゆらぎ)。書く動作の判定の下限に使う
+  let handNoise = null;
+  if (cfg) {
+    const motion = new HandMotion(cfg);
+    const speeds = [];
+    for (const f of features) {
+      const v = motion.update(f.hands, f.t, f.faceWidthNorm || 0.15);
+      if (v != null) speeds.push(v);
+    }
+    handNoise = median(speeds);
+  }
   return {
     yawDeg: median(faces.map((f) => f.yawDeg)),
     pitchDeg: median(faces.map((f) => f.pitchDeg)),
@@ -198,7 +225,9 @@ export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg }) {
     blink: median(faces.map((f) => f.blink)),
     ear: median(faces.map((f) => f.ear)),
     slouchRatio: median(features.map((f) => f.slouchRatio)),
-    tiltDeg,
+    tiltDeg: median(faces.map(tiltOf)),
+    tiltFromSensor: faces.some((f) => f.cameraTiltDeg != null),
+    handNoise,
     measuredEyeDeskCm,
     cameraHeightCm: h == null ? null : measuredEyeDeskCm - h,
   };
@@ -207,7 +236,8 @@ export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg }) {
 /** 目と机の距離の推定値(cm)。キャリブレーションがない、または虹彩が取れないときは null。 */
 export function estimateEyeDeskCm(f, cal) {
   if (!cal || cal.cameraHeightCm == null || !Number.isFinite(f.camDistCm)) return null;
-  return cal.cameraHeightCm + heightAboveCameraCm({ depthCm: f.camDistCm, verticalOffsetCm: f.verticalOffsetCm }, cal.tiltDeg);
+  const tilt = f.cameraTiltDeg ?? cal.tiltDeg;
+  return cal.cameraHeightCm + heightAboveCameraCm({ depthCm: f.camDistCm, verticalOffsetCm: f.verticalOffsetCm }, tilt);
 }
 
 /** 閉眼の判定(設計書 4.8)。下を向くとまぶたが閉じて見えるので、キャリブレーション値で補正する。 */
@@ -227,27 +257,50 @@ export function isEyesClosed(f, cal, cfg) {
   return false;
 }
 
-function handSpeed(prevHands, hands, dtSec, scale) {
-  if (!prevHands || prevHands.length === 0 || hands.length === 0 || dtSec <= 0) return null;
-  let best = 0;
-  for (const h of hands) {
-    let nearest = null;
-    let nd = Infinity;
-    for (const p of prevHands) {
-      const d = dist(h.centroid, p.centroid);
-      if (d < nd) {
-        nd = d;
-        nearest = p;
+const lerp = (p, q, a) => ({ x: p.x + (q.x - p.x) * a, y: p.y + (q.y - p.y) * a });
+
+/**
+ * 手の動きの速さ。検出のゆらぎで「止まっている手」が動いて見えないよう、指先と手首の位置を平滑化してから測る。
+ * 速さの単位は、顔の幅を 1 とした 1 秒あたりの移動量。
+ */
+export class HandMotion {
+  constructor(cfg) {
+    this.cfg = cfg;
+    this.prev = [];
+    this.prevT = null;
+  }
+
+  update(hands, t, scale) {
+    const a = this.cfg.handSmoothing;
+    const dtSec = this.prevT == null ? 0 : (t - this.prevT) / 1000;
+    this.prevT = t;
+    const next = [];
+    let best = null;
+    for (const h of hands) {
+      const cur = { tip: h.pts[8], wrist: h.pts[0], centroid: h.centroid };
+      let nearest = null;
+      let nd = Infinity;
+      for (const p of this.prev) {
+        const d = dist(cur.centroid, p.centroid);
+        if (d < nd) {
+          nd = d;
+          nearest = p;
+        }
+      }
+      if (nearest && nd < 0.25) {
+        const sm = { tip: lerp(nearest.tip, cur.tip, a), wrist: lerp(nearest.wrist, cur.wrist, a), centroid: cur.centroid };
+        if (dtSec > 0 && dtSec <= 1) {
+          const v = Math.max(dist(sm.tip, nearest.tip), dist(sm.wrist, nearest.wrist)) / scale / dtSec;
+          best = Math.max(best ?? 0, v);
+        }
+        next.push(sm);
+      } else {
+        next.push(cur);
       }
     }
-    if (nearest && nd < 0.25) {
-      // 人差し指の先(8)と手首(0)の動きの大きい方
-      const tip = dist(h.pts[8], nearest.pts[8]);
-      const wrist = dist(h.pts[0], nearest.pts[0]);
-      best = Math.max(best, Math.max(tip, wrist) / scale / dtSec);
-    }
+    this.prev = next;
+    return best;
   }
-  return best;
 }
 
 /**
@@ -259,9 +312,11 @@ export class Analyzer {
     this.autoAway = autoAway;
     this.cal = null;
     this.prev = null;
+    this.handMotion = new HandMotion(cfg);
     this.handSamples = [];
     this.perclos = [];
     this.closedSince = null;
+    this.closedRawSince = null;
     this.lookAwaySince = null;
     this.inLookAway = false;
     this.faceDownSince = null;
@@ -296,13 +351,16 @@ export class Analyzer {
 
     // --- 手の動き(作業の判定)
     const scale = f.faceWidthNorm || this.prev?.faceWidthNorm || 0.15;
-    const speed = handSpeed(this.prev?.hands, f.hands, dtSec, scale);
+    const speed = this.handMotion.update(f.hands, t, scale);
     if (speed != null) this.handSamples.push({ t, speed });
     this.handSamples = this.handSamples.filter((s) => t - s.t <= cfg.handWindowSec * 1000);
-    const avgSpeed = this.handSamples.length ? this.handSamples.reduce((s, x) => s + x.speed, 0) / this.handSamples.length : 0;
+    // 一瞬の跳ね(検出の誤り)に引きずられないよう、平均ではなく中央値を使う
+    const handSpeed = median(this.handSamples.map((s) => s.speed)) ?? 0;
     const eyeY = f.eyeMid?.y ?? 0.35;
     const handsOnDesk = f.hands.filter((h) => h.centroid.y > eyeY + (f.faceHeightNorm ?? 0.15) * 0.6);
-    const writing = handsOnDesk.length > 0 && avgSpeed >= cfg.writeSpeedMin && avgSpeed <= cfg.writeSpeedMax;
+    // 書く動作とみなす速さの下限。キャリブレーションで測った「止まっている手のゆらぎ」より十分速いこと
+    const writeMin = Math.max(cfg.writeSpeedMin, (cal?.handNoise ?? 0) * cfg.handNoiseFactor);
+    const writing = handsOnDesk.length > 0 && handSpeed >= writeMin && handSpeed <= cfg.writeSpeedMax;
 
     // --- 閉眼・PERCLOS
     const closed = isEyesClosed(f, cal, cfg);
@@ -322,6 +380,10 @@ export class Analyzer {
       this.closedSince = null;
     }
     const closedSec = this.closedSince == null ? 0 : (t - this.closedSince) / 1000;
+    // 書く動作の誤検出で居眠りを見逃さないよう、手の動きに関係なく長く閉じていたら居眠りとする
+    if (closed) this.closedRawSince ??= t;
+    else this.closedRawSince = null;
+    const closedRawSec = this.closedRawSince == null ? 0 : (t - this.closedRawSince) / 1000;
 
     // うつ伏せ:顔は見えないが体は映っていて、頭が低い
     const faceDown = !f.faceVisible && f.poseVisible && f.headLow && !writing;
@@ -353,7 +415,8 @@ export class Analyzer {
     const yawDev = cal?.yawDeg != null && f.faceVisible ? Math.abs(f.yawDeg - cal.yawDeg) : 0;
     const pitchUp = cal?.pitchDeg != null && f.faceVisible ? cal.pitchDeg - f.pitchDeg : 0;
     const lookAwayCand = f.present && ((!f.faceVisible && !faceDown) || yawDev > cfg.lookAwayYawDeg || pitchUp > cfg.lookAwayPitchUpDeg);
-    const lookAwaySec = this.sustained('lookaway', lookAwayCand && !writing, t);
+    // 頭の向きは強い手がかりなので、手が動いていてもよそ見とする
+    const lookAwaySec = this.sustained('lookaway', lookAwayCand, t);
     const lookingAway = lookAwaySec >= cfg.lookAwaySec;
     if (lookingAway && !this.inLookAway) events.push({ type: 'lookaway', t });
     this.inLookAway = lookingAway;
@@ -361,7 +424,7 @@ export class Analyzer {
     // --- 状態の決定
     let state;
     if (!f.present) state = 'absent';
-    else if (closedSec >= cfg.sleepClosedSec || faceDownSec >= cfg.faceDownSec) state = 'sleep';
+    else if (closedSec >= cfg.sleepClosedSec || closedRawSec >= cfg.sleepClosedSecAnyHands || faceDownSec >= cfg.faceDownSec) state = 'sleep';
     else if ((closedSec >= cfg.drowsyClosedSec || perclos >= cfg.perclosDrowsy) && !writing) state = 'drowsy';
     else if (lookingAway) state = 'lookaway';
     else if (writing) state = 'work';
@@ -374,21 +437,29 @@ export class Analyzer {
       this.sleepLevel = level;
     }
 
-    // --- 癖(設計書 4.7)
+    // --- 癖(設計書 4.7):指先の位置で判定する
     let habit = null;
+    let handFaceDist = null;
     if (f.faceVisible && f.hands.length) {
       const b = f.faceBox;
       const w = b.maxX - b.minX;
       const h = b.maxY - b.minY;
       const inX = (p) => p.x > b.minX - w * 0.15 && p.x < b.maxX + w * 0.15;
-      const pts = f.hands.flatMap((hd) => hd.pts);
-      const nearChin = pts.some((p) => inX(p) && p.y > f.chin.y - h * 0.15 && p.y < f.chin.y + h * 0.35);
-      const onFace = pts.some((p) => inX(p) && p.y > b.minY + h * 0.15 && p.y < f.chin.y - h * 0.1);
-      const onHead = pts.some((p) => inX(p) && p.y < b.minY + h * 0.15);
-      const slow = avgSpeed < cfg.writeSpeedMin * 2;
-      if (this.sustained('chin', nearChin && slow, t) >= cfg.chinRestSec) habit = 'chin_rest';
-      else if (this.sustained('head', onHead, t) >= cfg.habitTouchSec) habit = 'habit_head';
-      else if (this.sustained('face', onFace && !nearChin, t) >= cfg.habitTouchSec) habit = 'habit_face';
+      const tips = f.hands.flatMap((hd) => HAND_TIPS.map((i) => hd.pts[i]));
+      const knuckles = f.hands.flatMap((hd) => HAND_KNUCKLES.map((i) => hd.pts[i]));
+      handFaceDist = Math.min(
+        ...tips.map((p) => Math.hypot(Math.max(b.minX - p.x, 0, p.x - b.maxX), Math.max(b.minY - p.y, 0, p.y - b.maxY)) / (w || 1)),
+      );
+      const onHead = tips.some((p) => inX(p) && p.y < b.minY + h * 0.15 && p.y > b.minY - h * 0.6);
+      const onFace = tips.some((p) => inX(p) && p.y >= b.minY + h * 0.15 && p.y < f.chin.y);
+      const underChin = [...tips, ...knuckles].some((p) => inX(p) && p.y >= f.chin.y - h * 0.1 && p.y < f.chin.y + h * 0.3);
+      const still = handSpeed < cfg.chinRestMaxSpeed;
+      const chinSec = this.sustained('chin', underChin && still, t);
+      const headSec = this.sustained('head', onHead, t);
+      const faceSec = this.sustained('face', onFace && !(underChin && still), t);
+      if (chinSec >= cfg.chinRestSec) habit = 'chin_rest';
+      else if (headSec >= cfg.habitTouchSec) habit = 'habit_head';
+      else if (faceSec >= cfg.habitTouchSec) habit = 'habit_face';
     } else {
       this.sustained('chin', false, t);
       this.sustained('head', false, t);
@@ -424,7 +495,20 @@ export class Analyzer {
       away: this.away,
       events,
       flags: { writing, eyesClosed: closed, tooClose, slouch, tilt, habit: habit != null },
-      metrics: { handSpeed: avgSpeed, perclos, closedSec, eyeDeskCm, yawDev, pitchUp, blink: f.blink, ear: f.ear },
+      metrics: {
+        handSpeed,
+        writeMin,
+        handsCount: f.hands.length,
+        handFaceDist,
+        perclos,
+        closedSec,
+        eyeDeskCm,
+        cameraTiltDeg: f.cameraTiltDeg,
+        yawDev,
+        pitchUp,
+        blink: f.blink,
+        earRatio: cal?.ear && f.ear != null ? f.ear / cal.ear : null,
+      },
     };
   }
 }

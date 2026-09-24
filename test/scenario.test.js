@@ -20,12 +20,23 @@ test('場面の切り替え:最初の 5 秒は指示の読み上げ中', () => {
   assert.equal(phaseAt(scenarioTotalSec()), null);
 });
 
-test('読む:思考・作業が 7 割以上なら合格。居眠りの誤判定率を記録する', () => {
-  const r = evaluatePhase(byId('read'), samples(25, (t) => ({ state: t < 20 ? 'think' : 'drowsy' })));
-  assert.equal(r.pass, true);
-  assert.ok(r.notes[0].includes('居眠りの誤判定 23%'));
-  const bad = evaluatePhase(byId('read'), samples(25, (t) => ({ state: t < 10 ? 'think' : 'sleep' })));
-  assert.equal(bad.pass, false);
+test('読む:思考が 6 割以上、かつ居眠りの誤判定が 5% 以下なら合格', () => {
+  const ok = evaluatePhase(byId('read'), samples(25, (t) => ({ state: t < 20 ? 'think' : 'work' })));
+  assert.equal(ok.pass, true);
+  assert.ok(ok.notes[0].includes('居眠りの誤判定 0%'));
+  const sleepy = evaluatePhase(byId('read'), samples(25, (t) => ({ state: t < 20 ? 'think' : 'drowsy' })));
+  assert.equal(sleepy.pass, false);
+  assert.ok(sleepy.notes[0].includes('居眠りの誤判定 23%'));
+  // 1 回目の実機検証のように「作業」ばかりなら不合格(手の動きの誤検出)
+  const allWork = evaluatePhase(byId('read'), samples(25, () => ({ state: 'work' })));
+  assert.equal(allWork.pass, false);
+});
+
+test('場面ごとの数値の分布を記録する', () => {
+  const r = evaluatePhase(byId('write'), samples(25, (t) => ({ state: 'work', metrics: { handSpeed: t / 25, blink: null } })));
+  assert.ok(r.metrics.handSpeed.n > 100);
+  assert.ok(Math.abs(r.metrics.handSpeed.median - 0.564) < 0.01);
+  assert.equal(r.metrics.blink, undefined);
 });
 
 test('目を閉じる:居眠りの判定まで到達しなければ不合格', () => {
