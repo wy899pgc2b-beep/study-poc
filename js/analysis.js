@@ -269,6 +269,30 @@ export function isEyesClosed(f, cal, cfg) {
   return false;
 }
 
+/** 指先が顔の範囲(少し広げたもの)に入っているか。 */
+export function handCoversFace(f) {
+  if (!f.faceVisible || !f.faceBox || !f.hands?.length) return false;
+  const b = f.faceBox;
+  const mx = (b.maxX - b.minX) * 0.1;
+  const my = (b.maxY - b.minY) * 0.1;
+  return f.hands.some((h) =>
+    HAND_TIPS.some((i) => {
+      const p = h.pts[i];
+      return p && p.x > b.minX - mx && p.x < b.maxX + mx && p.y > b.minY - my && p.y < b.maxY + my;
+    }),
+  );
+}
+
+/** 端末が横向きか(DeviceOrientation の beta・gamma から)。平らに置いていて分からないときは null。 */
+export function deviceIsLandscape(betaDeg, gammaDeg) {
+  if (!Number.isFinite(betaDeg) || !Number.isFinite(gammaDeg)) return null;
+  const up = (d) => (d * Math.PI) / 180;
+  const yUp = Math.abs(Math.sin(up(betaDeg))); // 端末の縦方向がどれだけ上を向いているか
+  const xUp = Math.abs(Math.cos(up(betaDeg)) * Math.sin(up(gammaDeg))); // 横方向
+  if (Math.max(xUp, yUp) < 0.3) return null;
+  return xUp > yUp;
+}
+
 const lerp = (p, q, a) => ({ x: p.x + (q.x - p.x) * a, y: p.y + (q.y - p.y) * a });
 
 /**
@@ -401,7 +425,10 @@ export class Analyzer {
     const faceRate = this.faceSamples.reduce((a, x) => a + x.v, 0) / this.faceSamples.length;
 
     // --- 閉眼・PERCLOS
-    const closed = isEyesClosed(f, cal, cfg);
+    // 手が顔にかかっているときは、目が隠れて「閉じている」と誤判定しやすい(6 回目:顔を触る場面で居眠りと判定された)。
+    // そのあいだは閉眼として数えない
+    const handOnFace = handCoversFace(f);
+    const closed = isEyesClosed(f, cal, cfg) && !handOnFace;
     if (f.faceVisible) {
       this.perclos.push({ t, dt: dtSec, closed });
     }
@@ -590,6 +617,7 @@ export class Analyzer {
         blink: f.blink,
         earRatio: cal?.ear && f.ear != null ? f.ear / cal.ear : null,
         eyesClosed: closed ? 1 : 0,
+        handOnFace: handOnFace ? 1 : 0,
         faceVisible: f.faceVisible ? 1 : 0,
         faceRate,
         dozeShadow: dozeShadow ? 1 : 0,

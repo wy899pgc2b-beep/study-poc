@@ -7,6 +7,7 @@ import {
   STATE_LABELS,
   cameraTiltFromOrientation,
   checkFraming,
+  deviceIsLandscape,
   computeCalibration,
   extractFeatures,
   scoreMinute,
@@ -375,8 +376,16 @@ function guideStep(f) {
     const label = tilt == null ? '(任意)スマホの傾き:センサーを読めません' : `(任意)スマホの傾き ${Math.round(tilt)}°(目安 ${TILT_RANGE_DEG.min}〜${TILT_RANGE_DEG.max}°)`;
     items.push([label, inRange]);
     if (tilt != null && !inRange) {
-      say(tilt < TILT_RANGE_DEG.min ? 'スマホをもう少し寝かせてください' : 'スマホをもう少し起こしてください', { key: 'tilt', minIntervalSec: 7 });
+      say(tilt < TILT_RANGE_DEG.min ? 'スマホをもう少し寝かせてください' : 'スマホをもう少し起こしてください', { key: 'tilt', minIntervalSec: 30 });
     }
+  }
+  // 横向きに置いたのに映像が縦のまま(画面の向きのロックがかかっている)と、顔や手を正しく検出できない
+  const devLandscape = S.orientation ? deviceIsLandscape(S.orientation.beta, S.orientation.gamma) : null;
+  const videoLandscape = video.videoWidth > video.videoHeight;
+  if (devLandscape != null) {
+    const match = devLandscape === videoLandscape;
+    items.push([match ? `映像の向き:${videoLandscape ? '横' : '縦'}` : '映像の向きが合っていません(画面の向きのロックを解除してください)', match]);
+    if (!match) say('画面の向きのロックを解除してください', { key: 'orient', minIntervalSec: 10 });
   }
   $('guide-list').replaceChildren(
     ...items.map(([label, ok]) => {
@@ -404,11 +413,12 @@ function startCalibration() {
   S.calibFeatures = [];
   S.calibStartAt = performance.now() + 3500; // 音声の案内を聞き終わるのを待つ
   $('phase-label').textContent = 'キャリブレーション';
-  $('guide-title').innerHTML = '<b>正しい姿勢で、手を止めて教材を見てください</b>';
+  $('guide-title').innerHTML = '<b>正しい姿勢で、手を止めて、机の上の教材を見てください(画面は見ない)</b>';
   $('guide-list').replaceChildren();
   $('skip-guide').hidden = true;
   S.voice.beep({ freq: 784 });
-  say('位置はOKです。正しい姿勢で、手を止めて、教材を見てください', { interrupt: true });
+  // 6 回目:フロントカメラの画面を見たままキャリブレーションし、読むときより 23° 上を向いた基準になった
+  say('位置はOKです。画面ではなく、机の上の教材を見てください。正しい姿勢で、手を止めてください', { interrupt: true });
 }
 
 function calibrationStep(f) {
@@ -423,6 +433,7 @@ function calibrationStep(f) {
     startGuide();
     return;
   }
+  cal.orientation = video.videoWidth > video.videoHeight ? 'landscape' : 'portrait';
   startRunning(cal);
 }
 

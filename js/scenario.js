@@ -32,6 +32,7 @@ export const DIAGNOSTIC_METRICS = [
   'personFrac',
   'segHead',
   'covering',
+  'handOnFace',
   'poseVisible',
   'cameraTiltDeg',
 ];

@@ -541,3 +541,25 @@ test('斜め置き:肩が映っていなくても位置合わせを通れる。�
   assert.equal(r.last.metrics.lookingDown, 0);
   assert.ok(Math.abs(r.last.metrics.crownDelta - 0.3) < 1e-9); // 記録はする
 });
+
+test('閉眼:手が顔にかかっている間は、目が隠れても閉眼と数えない(6 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  // 指先が顔の範囲にあり、目が隠れて「閉じている」ように見える状態が 15 秒
+  const rubbing = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5, 0.35)] });
+  const r = run(a, 0, 15, rubbing);
+  assert.ok(!r.events.some((e) => e.type === 'sleep'));
+  assert.equal(r.last.metrics.handOnFace, 1);
+  // 手を離して目を閉じ続ければ居眠り
+  const r2 = run(a, 15200, 11, (t) => face(t, { blink: 0.9, ear: 0.08 }));
+  assert.ok(r2.events.some((e) => e.type === 'sleep'));
+});
+
+test('端末の向き:縦・横・平置きを判定する', async () => {
+  const { deviceIsLandscape } = await import('../js/analysis.js');
+  assert.equal(deviceIsLandscape(90, 0), false); // 縦に立てる
+  assert.equal(deviceIsLandscape(0, 90), true); // 横に立てる
+  assert.equal(deviceIsLandscape(0, -60), true); // 横向きで後ろに 30° 寝かせる
+  assert.equal(deviceIsLandscape(60, 0), false); // 縦向きで後ろに 30° 寝かせる
+  assert.equal(deviceIsLandscape(0, 0), null); // 平置き
+});
