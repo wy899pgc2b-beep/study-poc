@@ -3,17 +3,21 @@
 import { metricStats, phaseTimeline } from './scenario.js';
 
 // 警告の直前の様子として残す数値
-export const ALERT_METRICS = ['earRatio', 'blink', 'eyeLookDown', 'pitchUp', 'handSpeed', 'handFaceDist', 'faceVisible', 'handOnFace', 'writeShare'];
+export const ALERT_METRICS = ['earRatio', 'blink', 'eyeLookDown', 'eyeLookSide', 'jawOpen', 'pitchUp', 'handSpeed', 'handScale', 'handFaceDist', 'faceVisible', 'handOnFace', 'writeShare'];
 
 // 状態ごとの分布として残す数値
 export const STATE_METRICS = [
   'earRatio',
   'blink',
   'eyeLookDown',
+  'eyeLookSide',
+  'jawOpen',
   'eyesClosed',
   'pitchUp',
   'yawDev',
   'handSpeed',
+  'handScale',
+  'writeShare',
   'handsCount',
   'handFaceDist',
   'handOnFace',
@@ -25,7 +29,7 @@ export const STATE_METRICS = [
   'perclos',
 ];
 
-const ALERT_TYPES = new Set(['drowsy', 'sleep', 'habit_face', 'habit_head', 'chin_rest', 'lookaway', 'posture_close']);
+const ALERT_TYPES = new Set(['drowsy', 'sleep', 'habit_face', 'habit_head', 'chin_rest', 'lookaway', 'posture_close', 'yawn']);
 const STATES = ['work', 'think', 'lookaway', 'drowsy', 'sleep'];
 
 export class SessionDiagnostics {

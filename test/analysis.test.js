@@ -237,19 +237,42 @@ test('作業:顔の高さで動いている手は作業にしない', () => {
   assert.equal(run(a, 0, 3, (t) => face(t, { hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.35)] })).last.state, 'think');
 });
 
-test('居眠り:書き続けている間は、目を閉じていると判定されても居眠りにしない。手が止まって閉じ続けていれば居眠り(自由に学習・8 回目の前の不具合)', () => {
+test('居眠り:書いている間は短く目を閉じても「うとうと」にしないが、10 秒閉じていれば居眠り', () => {
+  // 書く動作の判定は誤ることがある(自由に学習:ペンを持って手をほとんど動かしていなくても「書いている」と出た)ので、
+  // 書いていると判定されていても、10 秒目を閉じていれば居眠りにする
   const a = new Analyzer(cfg);
   a.setCalibration(CAL);
-  const writing = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] });
-  const r = run(a, 0, 12, writing);
-  assert.equal(r.last.state, 'work');
-  assert.ok(!r.events.some((e) => e.type === 'sleep'));
-  assert.ok(r.last.metrics.writeShare > 0.9);
-  // 手を止めて(ペンを持ったまま)目を閉じ続ける → 直近 10 秒の書いていた割合が半分を切ったら居眠り
-  const still = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5, 0.85)] });
-  const r2 = run(a, 12200, 8, still);
-  assert.ok(r2.events.some((e) => e.type === 'sleep'));
-  assert.equal(r2.last.state, 'sleep');
+  const make = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] });
+  assert.equal(run(a, 0, 5, make).last.state, 'work');
+  const r = run(a, 5200, 6, make);
+  assert.equal(r.last.state, 'sleep');
+  assert.ok(r.last.metrics.writeShare > 0.9); // 書いていた割合は記録する
+});
+
+test('【記録のみ】あくび・視線の向き・手の大きさを記録する', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  // 口を大きく開けた状態が 2 秒 → あくびを 1 回記録
+  const r = run(a, 0, 2, (t) => face(t, { jawOpen: 0.7, eyeLookDown: 0.4, eyeLookSide: 0.1 }));
+  assert.equal(r.events.filter((e) => e.type === 'yawn').length, 1);
+  assert.equal(r.last.metrics.jawOpen, 0.7);
+  assert.equal(r.last.metrics.eyeLookDown, 0.4);
+  // 話す程度(0.3)ではあくびにしない
+  const b = new Analyzer(cfg);
+  b.setCalibration(CAL);
+  assert.ok(!run(b, 0, 3, (t) => face(t, { jawOpen: 0.3 })).events.some((e) => e.type === 'yawn'));
+  // 机の上の手の大きさ(顔の幅を 1 とする)
+  const h = { ...hand(0.5, 0.85), sizeNorm: 0.3 };
+  assert.ok(Math.abs(run(b, 3200, 0.4, (t) => face(t, { hands: [h] })).last.metrics.handScale - 1.5) < 1e-9);
+});
+
+test('特徴量:表情係数から視線の向きと口の開きを求める', () => {
+  const bs = { eyeBlinkLeft: 0.1, eyeBlinkRight: 0.1, eyeLookDownLeft: 0.5, eyeLookDownRight: 0.3, eyeLookUpLeft: 0, eyeLookUpRight: 0, eyeLookOutLeft: 0.6, eyeLookInRight: 0.4, eyeLookInLeft: 0, eyeLookOutRight: 0.1, jawOpen: 0.2 };
+  const lm = syntheticFaceLandmarks({ irisPx: 30, W: 720, H: 1280 });
+  const f = extractFeatures({ t: 0, width: 720, height: 1280, face: { landmarks: lm, blendshapes: bs }, hands: [], pose: null }, cfg);
+  assert.ok(Math.abs(f.eyeLookDown - 0.4) < 1e-9);
+  assert.ok(Math.abs(f.eyeLookSide - 0.5) < 1e-9);
+  assert.equal(f.jawOpen, 0.2);
 });
 
 test('閉眼:読む・書くときの閉じ具合(2〜7 回目の 90% の値は 0.53 以下)では、EAR 比が基準並みなら閉眼にしない', () => {

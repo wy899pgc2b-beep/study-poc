@@ -32,6 +32,7 @@ const EVENT_TEXT = {
   habit_face: '癖:顔を触る',
   habit_head: '癖:頭・髪を触る',
   chin_rest: '癖:頬杖',
+  yawn: 'あくび(記録のみ)',
   posture_close: '姿勢:目が机に近い',
   posture_slouch: '姿勢:前かがみ',
   posture_tilt: '姿勢:体の傾き',

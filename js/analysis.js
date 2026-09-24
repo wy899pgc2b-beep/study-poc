@@ -95,6 +95,7 @@ export function extractFeatures(frame, cfg) {
       // 手の形:手の大きさ(手首〜中指の付け根)を 1 とした、親指と人差し指の先の距離(ペンを持つと小さくなる)
       const wrist = toPx(pts[0], W, H);
       const size = dist(wrist, toPx(pts[9], W, H));
+      hand.sizeNorm = size / W; // 手の大きさ(手首〜中指の付け根。画像の幅を 1 とする)
       if (size > 0) {
         const tip = toPx(pts[8], W, H);
         hand.pinch = dist(toPx(pts[4], W, H), tip) / size;
@@ -128,8 +129,16 @@ export function extractFeatures(frame, cfg) {
     } else {
       f.blink = null;
     }
-    // 【記録のみ】視線の下向き(表情係数)。目を閉じたのか、視線を下げただけなのかを見分けられるかを調べる
-    f.eyeLookDown = bs && bs.eyeLookDownLeft != null && bs.eyeLookDownRight != null ? (bs.eyeLookDownLeft + bs.eyeLookDownRight) / 2 : null;
+    // 【記録のみ】視線の向き(表情係数)。目を閉じたのか視線を下げただけなのか、顔を動かさないよそ見を見分けられるかを調べる
+    const pair = (a, b) => (bs && bs[a] != null && bs[b] != null ? (bs[a] + bs[b]) / 2 : null);
+    f.eyeLookDown = pair('eyeLookDownLeft', 'eyeLookDownRight');
+    f.eyeLookUp = pair('eyeLookUpLeft', 'eyeLookUpRight');
+    // 横向きの視線:両目が同じ向き(左目は外・右目は内、またはその逆)を向いている強さ
+    const sideA = pair('eyeLookOutLeft', 'eyeLookInRight');
+    const sideB = pair('eyeLookInLeft', 'eyeLookOutRight');
+    f.eyeLookSide = sideA == null || sideB == null ? null : Math.max(sideA, sideB);
+    // 【記録のみ】口の開き。あくび(眠気の手がかり)を調べる
+    f.jawOpen = bs?.jawOpen ?? null;
 
     const a = toPx(lm[FACE.leftOuter], W, H);
     const b = toPx(lm[FACE.rightOuter], W, H);
@@ -436,7 +445,10 @@ export class Analyzer {
     const pinch = pinches.length ? Math.min(...pinches) : null;
     const penGrip = pinch != null && pinch < cfg.penGripPinchMax;
     const writing = handsOnDesk.length > 0 && handSpeed >= cfg.writeSpeedMin;
-    // 直近 10 秒のうち書いていた時間の割合
+    // 【記録のみ】机の上の手の大きさ(顔の幅を 1 とする)。手がカメラに近いほど大きく、手の速さも大きく出る
+    const handSizes = handsOnDesk.map((h) => h.sizeNorm).filter((x) => x > 0);
+    const handScale = handSizes.length && f.faceWidthNorm ? Math.max(...handSizes) / f.faceWidthNorm : null;
+    // 【記録のみ】直近 10 秒のうち書いていた時間の割合
     this.writeSamples.push({ t, dt: dtSec, w: writing });
     this.writeSamples = this.writeSamples.filter((x) => t - x.t <= cfg.sleepClosedSec * 1000);
     const writeTotal = this.writeSamples.reduce((a, x) => a + x.dt, 0);
@@ -470,10 +482,17 @@ export class Analyzer {
     // 閉眼の判定は境目の値でちらつく(4 回目:閉じたまま 1 秒だけ「開いた」と出て、10 秒の計測がやり直しになった)。
     // 短い途切れは閉じたままとみなす
     const closedSec = this.sustainedGap('closed', closed && !writing, t, cfg.closedGapSec);
-    // 居眠りは、書いている間も目を閉じた時間で測る(3 回目:手を組んだのを書く動作と誤判定し、居眠りを見逃した。今は手の速さで判定する)。
-    // ただし、その間ほとんど書いていたなら居眠りにしない(自由に学習・8 回目の前:書いている最中に居眠りと誤判定した)
+    // 居眠りは手の動きに関係なく、目を閉じた時間で判定する(3 回目:手を組んだのを書く動作と誤判定し、居眠りを見逃した。
+    // 自由に学習(8 回目の前):ペンを持って手をほとんど動かしていなくても「書いている」と判定された。書く動作の判定はまだ当てにならない)
     const closedRawSec = this.sustainedGap('closedRaw', closed, t, cfg.closedGapSec);
-    const closedAsleep = closedRawSec >= cfg.sleepClosedSec && writeShare < cfg.sleepMaxWriteShare;
+
+    // 【記録のみ】あくび
+    const yawnSec = this.sustainedGap('yawn', f.jawOpen != null && f.jawOpen >= cfg.yawnJawOpen, t, 0.5);
+    if (yawnSec >= cfg.yawnSec && !this.yawnFired) {
+      this.yawnFired = true;
+      events.push({ type: 'yawn', t });
+    }
+    if (yawnSec === 0) this.yawnFired = false;
 
     // --- 頭のうつむき具合(設計書 4.9)
     const seg = f.seg ?? this.lastSeg;
@@ -543,7 +562,7 @@ export class Analyzer {
     // --- 状態の決定
     let state;
     if (!present) state = 'absent';
-    else if (closedAsleep || faceDownSec >= cfg.faceDownSec) state = 'sleep';
+    else if (closedRawSec >= cfg.sleepClosedSec || faceDownSec >= cfg.faceDownSec) state = 'sleep';
     else if ((closedSec >= cfg.drowsyClosedSec || perclos >= cfg.perclosDrowsy) && !writing) state = 'drowsy';
     else if (lookingAway) state = 'lookaway';
     else if (writing) state = 'work';
@@ -650,8 +669,12 @@ export class Analyzer {
         eyesClosed: closed ? 1 : 0,
         closedBy,
         eyeLookDown: f.eyeLookDown ?? null,
+        eyeLookUp: f.eyeLookUp ?? null,
+        eyeLookSide: f.eyeLookSide ?? null,
+        jawOpen: f.jawOpen ?? null,
         writing: writing ? 1 : 0,
         writeShare,
+        handScale,
         handOnFace: handOnFace ? 1 : 0,
         faceVisible: f.faceVisible ? 1 : 0,
         faceRate,
