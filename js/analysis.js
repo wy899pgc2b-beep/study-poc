@@ -263,13 +263,42 @@ export function estimateEyeDeskCm(f, cal) {
 }
 
 /**
+ * 本人の「目を閉じたとき」の基準を作る(設計書 4.12)。キャリブレーションの後に 3 秒目を閉じてもらった間の特徴量から。
+ * 目を閉じたことを確かめられなければ(目の形も閉じ具合も変わらなければ)null。
+ */
+export function computeClosedReference(features, cal, cfg) {
+  const faces = features.filter((f) => f.faceVisible);
+  if (!cal || faces.length < 3) return null;
+  const ear = median(faces.map((f) => f.ear));
+  const blink = median(faces.map((f) => f.blink));
+  const earOk = ear != null && cal.ear && cal.ear - ear >= cal.ear * cfg.personalMinEarDrop;
+  const blinkOk = blink != null && cal.blink != null && blink - cal.blink >= cfg.personalMinBlinkRise;
+  if (!earOk && !blinkOk) return null;
+  return { ear: earOk ? ear : null, blink: blinkOk ? blink : null };
+}
+
+/**
+ * 本人の基準で見た、目の閉じ具合(開いたとき 0、閉じたとき 1)。目の形と閉じ具合(表情係数)の平均。
+ * 目を閉じたときの基準がなければ null。
+ */
+export function personalClosedScore(f, cal) {
+  const ref = cal?.closedRef;
+  if (!ref || !f.faceVisible) return null;
+  const parts = [];
+  if (ref.ear != null && f.ear != null) parts.push((cal.ear - f.ear) / (cal.ear - ref.ear));
+  if (ref.blink != null && f.blink != null) parts.push((f.blink - cal.blink) / (ref.blink - cal.blink));
+  return parts.length ? parts.reduce((a, x) => a + x, 0) / parts.length : null;
+}
+
+/**
  * 閉眼の判定(設計書 4.8)。下を向くとまぶたが閉じて見えるので、キャリブレーション値で補正する。
  * 閉じていると判定した理由を返す(閉じていなければ null)。
  * 'down' 深くうつむいていて EAR がとても小さい / 'ear' EAR がはっきり小さい /
- * 'earBlink' EAR がやや小さく閉じ具合もやや高い / 'blink' 閉じ具合が高い
+ * 'earBlink' EAR がやや小さく閉じ具合もやや高い / 'blink' 閉じ具合が高い / 'personal' 本人の目を閉じたときの基準に近い
  */
 export function eyeClosureReason(f, cal, cfg) {
   if (!f.faceVisible) return null;
+  const personal = personalClosedScore(f, cal);
   const calBlink = cal?.blink ?? 0.2;
   const calEar = cal?.ear ?? null;
   const blinkThr = clamp(calBlink + cfg.blinkMarginOverCal, cfg.blinkMin, cfg.blinkMax);
@@ -277,7 +306,10 @@ export function eyeClosureReason(f, cal, cfg) {
   const lookingFurtherDown = cal?.pitchDeg != null && f.pitchDeg - cal.pitchDeg > cfg.lookingDownExtraDeg;
 
   // 深くうつむいているときは、まぶたが下がって見えるので、目の形がはっきり閉じているときだけ閉眼とする
-  if (lookingFurtherDown) return earRatio != null && earRatio < cfg.earRatioStrongWhenDown ? 'down' : null;
+  if (lookingFurtherDown) {
+    if (earRatio != null && earRatio < cfg.earRatioStrongWhenDown) return 'down';
+    return personal != null && personal >= cfg.personalCloseScoreWhenDown ? 'personal' : null;
+  }
   // 目の形(EAR)がはっきり小さい
   if (earRatio != null && earRatio < cfg.earRatioAlone) return 'ear';
   if (f.blink == null) return earRatio != null && earRatio < cfg.earRatioStrong ? 'ear' : null;
@@ -287,6 +319,8 @@ export function eyeClosureReason(f, cal, cfg) {
   if (earRatio != null && earRatio < cfg.earRatioStrong && f.blink >= blinkWithEar) return 'earBlink';
   // 閉じ具合が高く、目の形も基準より小さい
   if (f.blink >= blinkThr && (earRatio == null || earRatio < cfg.earRatioWithBlink)) return 'blink';
+  // 本人の目を閉じたときの基準に近い(カメラ・置き方・メガネで値が変わっても使える)
+  if (personal != null && personal >= cfg.personalCloseScore) return 'personal';
   return null;
 }
 
@@ -444,7 +478,15 @@ export class Analyzer {
     const pinches = handsOnDesk.map((h) => h.pinch).filter((x) => Number.isFinite(x));
     const pinch = pinches.length ? Math.min(...pinches) : null;
     const penGrip = pinch != null && pinch < cfg.penGripPinchMax;
-    const writing = handsOnDesk.length > 0 && handSpeed >= cfg.writeSpeedMin;
+    // 頭が机の上にある(伏せている):顔が見えず、髪が大きく映っているか、頭がカメラを覆っている。このときは書いていない
+    const seg = f.seg ?? this.lastSeg;
+    if (f.seg) this.lastSeg = f.seg;
+    const headOnDesk =
+      !f.faceVisible &&
+      seg != null &&
+      ((seg.hairFrac != null && cal?.hairFrac >= cfg.segMinHairFrac && seg.hairFrac >= cal.hairFrac * cfg.headOnDeskHairRatio) ||
+        seg.personFrac >= cfg.coverPersonFrac);
+    const writing = handsOnDesk.length > 0 && handSpeed >= cfg.writeSpeedMin && !headOnDesk;
     // 【記録のみ】机の上の手の大きさ(顔の幅を 1 とする)。手がカメラに近いほど大きく、手の速さも大きく出る
     const handSizes = handsOnDesk.map((h) => h.sizeNorm).filter((x) => x > 0);
     const handScale = handSizes.length && f.faceWidthNorm ? Math.max(...handSizes) / f.faceWidthNorm : null;
@@ -495,8 +537,6 @@ export class Analyzer {
     if (yawnSec === 0) this.yawnFired = false;
 
     // --- 頭のうつむき具合(設計書 4.9)
-    const seg = f.seg ?? this.lastSeg;
-    if (f.seg) this.lastSeg = f.seg;
     // 髪の面積がキャリブレーション時より大きく減っていれば、頭は下がっていない(横や後ろを向いた)。
     // そのときは上半身の特徴点による「頭が低い」を使わない(7 回目:横向きに置いて横を向くと、肩からの頭の高さが −1.0 と出て
     // 「うつむいている」「伏せている」と判定され、よそ見を見逃した。うつむく・伏せるときは髪の面積が増える)
@@ -668,6 +708,7 @@ export class Analyzer {
         earRatio: cal?.ear && f.ear != null ? f.ear / cal.ear : null,
         eyesClosed: closed ? 1 : 0,
         closedBy,
+        closedScore: personalClosedScore(f, cal),
         eyeLookDown: f.eyeLookDown ?? null,
         eyeLookUp: f.eyeLookUp ?? null,
         eyeLookSide: f.eyeLookSide ?? null,

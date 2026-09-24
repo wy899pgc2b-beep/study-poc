@@ -16,6 +16,7 @@ export const DIAGNOSTIC_METRICS = [
   'blink',
   'earRatio',
   'eyesClosed',
+  'closedScore',
   'eyeLookDown',
   'eyeLookUp',
   'eyeLookSide',
@@ -51,7 +52,7 @@ const STATE_LETTERS = { work: 'w', think: 't', lookaway: 'l', drowsy: 'd', sleep
  * state:w=作業 t=思考 l=よそ見 d=うとうと s=居眠り a=不在 A=離席 p=一時停止
  * face(顔を検出)・closed(閉眼)・grip(ペンの形)・doze(前に傾いた居眠りの候補・試験中)・
  * bow(うつむいている)・head(髪の映り方から頭があると判定)・write(書いている):1=あり 0=なし -=不明
- * by:閉眼と判定した理由 e=目の形 b=目の形と閉じ具合 k=閉じ具合 d=深くうつむいて目の形 .=開眼 -=不明
+ * by:閉眼と判定した理由 e=目の形 b=目の形と閉じ具合 k=閉じ具合 d=深くうつむいて目の形 p=本人の目を閉じたときの基準 .=開眼 -=不明
  */
 export function phaseTimeline(samples, sec) {
   const n = Math.ceil(sec);
@@ -88,7 +89,7 @@ export function phaseTimeline(samples, sec) {
   };
 }
 
-const CLOSED_BY_LETTERS = { ear: 'e', earBlink: 'b', blink: 'k', down: 'd', '.': '.' };
+const CLOSED_BY_LETTERS = { ear: 'e', earBlink: 'b', blink: 'k', down: 'd', personal: 'p', '.': '.' };
 
 function quantile(sorted, q) {
   if (!sorted.length) return null;

@@ -11,7 +11,9 @@ import {
   extractFeatures,
   focalLengthPx,
   heightAboveCameraCm,
+  computeClosedReference,
   eyeClosureReason,
+  personalClosedScore,
   isEyesClosed,
   learningStyle,
   scoreMinute,
@@ -672,4 +674,55 @@ test('癖:指先の検出が一瞬途切れても、触り続けていれば「�
   b.setCalibration(CAL);
   const brief = (t) => face(t, { hands: t % 1600 < 800 ? [hand(0.5, 0.1)] : [] });
   assert.ok(!run(b, 0, 6, brief).events.some((e) => e.type === 'habit_head'));
+});
+
+// 8 回目の実機検証(バックカメラ・横向き・メガネ)のキャリブレーション値。目を閉じたときの基準は「目を閉じる」場面の値
+const CAL8 = { ...CAL, blink: 0.153, ear: 0.248, pitchDeg: 11.9, headHeight: 0.535, hairFrac: 0.033, personFrac: 0.504, crownRatio: 0.345 };
+const CAL8C = { ...CAL8, closedRef: { ear: 0.248 * 0.403, blink: 0.484 } };
+
+test('目を閉じたときの基準:目を 3 秒閉じた間の値から作る。閉じたことを確かめられなければ null', () => {
+  const closed = [0, 200, 400, 600].map((t) => face(t, { ear: 0.1, blink: 0.48 }));
+  const ref = computeClosedReference(closed, CAL8, cfg);
+  assert.ok(Math.abs(ref.ear - 0.1) < 1e-9);
+  assert.equal(ref.blink, 0.48);
+  // 目を開けたまま(目の形も閉じ具合も変わらない)
+  const open = [0, 200, 400, 600].map((t) => face(t, { ear: 0.24, blink: 0.18 }));
+  assert.equal(computeClosedReference(open, CAL8, cfg), null);
+  // 閉じ具合だけ変わった(目の形は使わない)
+  const blinkOnly = [0, 200, 400, 600].map((t) => face(t, { ear: 0.23, blink: 0.5 }));
+  assert.deepEqual(computeClosedReference(blinkOnly, CAL8, cfg), { ear: null, blink: 0.5 });
+});
+
+test('閉眼:本人の目を閉じたときの基準で、8 回目の「前に傾いて目を閉じる」を閉眼と判定する。読む・書く・近づけるは開眼', () => {
+  const at = (ratio, blink, bow) => face(0, { ear: CAL8.ear * ratio, blink, pitchDeg: CAL8.pitchDeg + bow });
+  // 前に傾いて目を閉じる:EAR 比 0.67、閉じ具合 0.35、14° うつむく(これまでの基準では判定できなかった)
+  assert.equal(eyeClosureReason(at(0.665, 0.345, 14.2), CAL8, cfg), null);
+  assert.equal(eyeClosureReason(at(0.665, 0.345, 14.2), CAL8C, cfg), 'personal');
+  assert.ok(Math.abs(personalClosedScore(at(0.665, 0.345, 14.2), CAL8C) - 0.57) < 0.01);
+  // 読む(EAR 比 1.05・閉じ具合 0.14)・書く(1.12・0.11)は開眼
+  assert.equal(eyeClosureReason(at(1.045, 0.139, 11.8), CAL8C, cfg), null);
+  assert.equal(eyeClosureReason(at(1.123, 0.108, 9.9), CAL8C, cfg), null);
+  // 顔を近づける(EAR 比 0.76・閉じ具合 0.27、22° うつむく)は開眼(深くうつむいているので基準を厳しくする)
+  assert.equal(eyeClosureReason(at(0.762, 0.266, 21.5), CAL8C, cfg), null);
+  // 顔を上げて目を閉じる
+  assert.equal(eyeClosureReason(at(0.403, 0.484, -1.7), CAL8C, cfg), 'ear');
+});
+
+test('居眠り:本人の基準があれば、8 回目の「前に傾いて目を閉じる」を 10 秒で居眠りと判定する', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(CAL8C);
+  const k = (t) => (Math.sin(t / 900) + 1) / 2;
+  const doze = (t) => face(t, { ear: CAL8.ear * (0.62 + 0.08 * k(t)), blink: 0.33 + 0.04 * k(t), pitchDeg: CAL8.pitchDeg + 14 });
+  const r = run(a, 0, 12, doze);
+  assert.ok(r.events.some((e) => e.type === 'sleep'));
+});
+
+test('居眠り:伏せている間に手の検出がゆらいで「書いている」と出ても、髪が大きく映っていれば伏せた居眠り(8 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(CAL8);
+  const seg = { crownRatio: 0.9, hairFrac: 0.647, faceSkinFrac: 0.01, personFrac: 0.836 };
+  const facedown = (t) => lostFace(t, { headHeight: -0.26, headLow: true, seg, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] });
+  const r = run(a, 0, 21, facedown);
+  assert.equal(r.last.flags.writing, false);
+  assert.ok(r.events.some((e) => e.type === 'sleep'));
 });

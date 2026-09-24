@@ -3,7 +3,7 @@
 import { metricStats, phaseTimeline } from './scenario.js';
 
 // 警告の直前の様子として残す数値
-export const ALERT_METRICS = ['earRatio', 'blink', 'eyeLookDown', 'eyeLookSide', 'jawOpen', 'pitchUp', 'handSpeed', 'handScale', 'handFaceDist', 'faceVisible', 'handOnFace', 'writeShare'];
+export const ALERT_METRICS = ['earRatio', 'blink', 'closedScore', 'eyeLookDown', 'eyeLookSide', 'jawOpen', 'pitchUp', 'handSpeed', 'handScale', 'handFaceDist', 'faceVisible', 'handOnFace', 'writeShare'];
 
 // 状態ごとの分布として残す数値
 export const STATE_METRICS = [
@@ -13,6 +13,7 @@ export const STATE_METRICS = [
   'eyeLookSide',
   'jawOpen',
   'eyesClosed',
+  'closedScore',
   'pitchUp',
   'yawDev',
   'handSpeed',

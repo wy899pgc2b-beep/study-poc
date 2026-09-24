@@ -9,6 +9,7 @@ import {
   checkFraming,
   deviceIsLandscape,
   computeCalibration,
+  computeClosedReference,
   extractFeatures,
   scoreMinute,
 } from './analysis.js';
@@ -47,7 +48,7 @@ const S = {
   vision: null,
   visionGpu: null,
   stream: null,
-  phase: 'idle', // idle | guide | calibrating | running
+  phase: 'idle', // idle | guide | calibrating | calibratingClosed | running
   raf: null,
 };
 
@@ -290,6 +291,7 @@ function processFrame() {
   if (!S.dark) drawOverlay(det, pose);
   if (S.phase === 'guide') guideStep(f);
   else if (S.phase === 'calibrating') calibrationStep(f);
+  else if (S.phase === 'calibratingClosed') closedCalibrationStep(f);
   else if (S.phase === 'running') runStep(f);
   updatePerf();
 }
@@ -442,6 +444,30 @@ function calibrationStep(f) {
     return;
   }
   cal.orientation = video.videoWidth > video.videoHeight ? 'landscape' : 'portrait';
+  startClosedCalibration(cal);
+}
+
+// 本人の「目を閉じたとき」の基準を取る。カメラ・置き方・メガネで閉じたときの値が変わるため(8 回目)
+function startClosedCalibration(cal) {
+  S.phase = 'calibratingClosed';
+  S.pendingCal = cal;
+  S.calibFeatures = [];
+  S.calibStartAt = performance.now() + 5000; // 音声の案内を聞き終わり、目を閉じるのを待つ
+  $('guide-title').innerHTML = '<b>そのまま目を閉じてください。音が鳴ったら目を開けてください</b>';
+  say('次に、そのままの姿勢で、目を閉じてください。音が鳴ったら、目を開けてください', { interrupt: true });
+}
+
+function closedCalibrationStep(f) {
+  if (f.t < S.calibStartAt) return;
+  S.calibFeatures.push(f);
+  const left = Math.ceil(3 - (f.t - S.calibStartAt) / 1000);
+  $('guide-list').replaceChildren(Object.assign(document.createElement('li'), { textContent: `目を閉じたときを記録中… あと ${Math.max(0, left)} 秒` }));
+  if (f.t - S.calibStartAt < 3000) return;
+  const cal = S.pendingCal;
+  cal.closedRef = computeClosedReference(S.calibFeatures, cal, S.cfg);
+  S.voice.beep({ freq: 1046, sec: 0.3, volume: 0.6 });
+  // 目を閉じたことを確かめられなくても、これまでの基準で判定を続ける
+  if (!cal.closedRef) say('目を閉じたときの記録ができませんでした。このまま始めます', { interrupt: true });
   startRunning(cal);
 }
 
@@ -504,10 +530,10 @@ function notify(ev) {
       S.voice.stopAlarm();
       break;
     case 'drowsy':
-      // 判定がちらついて何度も鳴らないよう、一定の間隔をあける
-      if (!quiet && (S.lastDrowsyBeepAt == null || ev.t - S.lastDrowsyBeepAt >= S.cfg.drowsyBeepMinSec * 1000)) {
+      // 判定がちらついて何度も鳴らないよう、一定の間隔をあける。検証シナリオ中も鳴らす(鳴るかどうかを確かめられるように)
+      if (S.lastDrowsyBeepAt == null || ev.t - S.lastDrowsyBeepAt >= S.cfg.drowsyBeepMinSec * 1000) {
         S.lastDrowsyBeepAt = ev.t;
-        S.voice.beep({ freq: 660 });
+        S.voice.chime();
       }
       break;
     case 'away_start':

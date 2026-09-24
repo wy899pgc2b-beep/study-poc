@@ -56,6 +56,12 @@ export class Voice {
     osc.stop(t0 + sec + 0.02);
   }
 
+  // 「うとうと」の注意音:高い音から低い音への 2 音。短い効果音(0.15 秒・音量 0.3)では聞こえにくかったため(8 回目)
+  chime() {
+    this.beep({ freq: 988, sec: 0.35, volume: 0.8 });
+    setTimeout(() => this.beep({ freq: 740, sec: 0.5, volume: 0.8 }), 380);
+  }
+
   // 居眠りアラーム:音量を段階的に上げる(設計書 3.8)
   startAlarm() {
     if (this.alarm) return;
