@@ -1,6 +1,6 @@
 // 技術検証アプリの画面の流れ:設定 → 読み込み → 設置ガイド → キャリブレーション → 学習中 → 結果
 
-import { DEFAULTS, SETUP_TILT_DEG, TILT_RANGE_DEG } from './config.js';
+import { APP_VERSION, DEFAULTS, SETUP_TILT_DEG, TILT_RANGE_DEG } from './config.js';
 import {
   Analyzer,
   SessionRecorder,
@@ -11,6 +11,7 @@ import {
   computeCalibration,
   computeClosedReference,
   extractFeatures,
+  eyeSignalQuality,
   scoreMinute,
 } from './analysis.js';
 import { SessionDiagnostics } from './diagnostics.js';
@@ -466,9 +467,12 @@ function closedCalibrationStep(f) {
   if (f.t - S.calibStartAt < 3000) return;
   const cal = S.pendingCal;
   cal.closedRef = computeClosedReference(S.calibFeatures, cal, S.cfg);
+  cal.eyeSignal = eyeSignalQuality(cal, S.cfg);
   S.voice.beep({ freq: 1046, sec: 0.3, volume: 0.6 });
-  // 目を閉じたことを確かめられなくても、これまでの基準で判定を続ける
-  if (!cal.closedRef) say('目を閉じたときの記録ができませんでした。このまま始めます', { interrupt: true });
+  // 目の状態が読み取りにくいとき(メガネなど)は、判定できないことがあると伝える。判定はこれまでの基準で続ける
+  if (cal.eyeSignal === 'weak') {
+    say('目を閉じたときの様子が、はっきり読み取れませんでした。メガネを掛けていると、前に傾いた居眠りを判定できないことがあります', { interrupt: true });
+  }
   startRunning(cal);
 }
 
@@ -716,6 +720,7 @@ function finish(reason) {
   const spanSec = S.perf.lastT && S.perf.firstT ? (S.perf.lastT - S.perf.firstT) / 1000 : 0;
   const data = {
     version: 1,
+    appVersion: APP_VERSION,
     createdAt: S.startedAt.toISOString(),
     reason,
     opts: S.opts,
@@ -774,6 +779,19 @@ $('btn-download').addEventListener('click', () => {
 });
 
 $('btn-again').addEventListener('click', () => show('setup'));
+
+// 試作品の版を表示し、キャッシュに残った古い版が読み込まれていれば知らせる(9 回目:公開直後の検証が 1 つ前の版で動いた)
+$('app-version').textContent = `試作品の版:${APP_VERSION}`;
+fetch('version.json', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((v) => {
+    if (v?.version && v.version !== APP_VERSION) {
+      $('stale-version').hidden = false;
+      $('stale-version-text').textContent = `新しい版(${v.version})が公開されていますが、古い版(${APP_VERSION})が読み込まれています。`;
+    }
+  })
+  .catch(() => {});
+$('btn-reload').addEventListener('click', () => location.reload());
 
 // テスト用(自動テストから状態を確認する)
 window.__poc = S;

@@ -1,4 +1,8 @@
 // 判定のしきい値など。技術検証ではここの値を調整する(設計書 4 章の初期案に対応)。
+
+// 試作品の版。公開のたびに上げ、version.json も同じ値にする(古い版がキャッシュから読み込まれたことに気づけるように。
+// 9 回目:公開の 3 分後に始めた検証が、キャッシュに残った 1 つ前の版で動いていた)
+export const APP_VERSION = 'poc-12';
 export const DEFAULTS = {
   analysisFps: 5,
 
@@ -40,6 +44,11 @@ export const DEFAULTS = {
   personalCloseScoreWhenDown: 0.6, // キャリブレーションより 15° 以上深くうつむいているとき
   personalMinEarDrop: 0.15, // 閉じたときの EAR がキャリブレーション時よりこの割合以上小さくなければ、目の形は使わない
   personalMinBlinkRise: 0.1, // 閉じたときの閉じ具合がこの値以上大きくならなければ、閉じ具合は使わない
+  // キャリブレーションで目を閉じたときの値から、目の状態が読み取りやすいかを判断する(利用者への案内のみ)。
+  // メガネあり(自由学習):EAR 比 0.54・閉じ具合 +0.29 → 前に傾いた居眠りを判定できなかった。
+  // メガネなし(9 回目):EAR 比 0.24・閉じ具合 +0.40 → 判定できた
+  eyeSignalClearEarRatio: 0.4, // 目を閉じたときの EAR 比がこれ未満、または
+  eyeSignalClearBlinkRise: 0.35, // 閉じ具合がこれ以上上がれば「はっきり読み取れる」
   closedGapSec: 1, // 閉眼の途切れがこの秒数以内なら、閉じたままとみなす
   lookingDownExtraDeg: 15, // キャリブレーションよりさらに下を向いているときは強い証拠だけで判定
   drowsyClosedSec: 3,
@@ -128,4 +137,5 @@ export const DEFAULTS = {
 export const SETUP_TILT_DEG = { stand: 0, tilt: 45, landscape: 20, flat: 90 };
 
 // 置き方ごとの目安の角度(カメラが水平より上を向く角度)
-export const TILT_RANGE_DEG = { tilt: { min: 35, max: 55 }, landscape: { min: 10, max: 35 } };
+// 横向き:7・8 回目と自由学習(20.6〜23°)では手元が映ったが、9 回目(30°)は「書く」で手がほとんど映らなかった
+export const TILT_RANGE_DEG = { tilt: { min: 35, max: 55 }, landscape: { min: 10, max: 25 } };

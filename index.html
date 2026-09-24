@@ -21,6 +21,11 @@
         <p class="lead">スマホのカメラで学習中の様子を撮影し、AI の判定がどのくらい正しいかを確かめる試作品です。映像は端末の中だけで処理し、保存も送信もしません。</p>
       </header>
 
+      <div id="stale-version" class="error" hidden>
+        <p id="stale-version-text"></p>
+        <p>数分待ってから再読み込みしてください。<button type="button" id="btn-reload">再読み込み</button></p>
+      </div>
+
       <form id="setup-form" class="stack">
         <fieldset class="card">
           <legend>検証の種類</legend>
@@ -90,6 +95,7 @@
 
         <button type="submit" class="primary">カメラを起動する</button>
         <p class="note">スマホは充電しながら、スタンドに立てて使ってください。カメラ・音声・動きセンサーの許可を求められたら「許可」を選んでください。</p>
+        <p class="note" id="app-version"></p>
       </form>
     </section>
 

@@ -278,6 +278,18 @@ export function computeClosedReference(features, cal, cfg) {
 }
 
 /**
+ * 目の状態がはっきり読み取れるか('clear' | 'weak')。キャリブレーションで目を閉じたときの値で判断する。
+ * メガネを掛けていると、低い位置のカメラからは目を閉じても閉じたように見えにくい(技術検証の 8・9 回目)。
+ */
+export function eyeSignalQuality(cal, cfg) {
+  const ref = cal?.closedRef;
+  if (!ref) return 'weak';
+  const earClear = ref.ear != null && cal.ear && ref.ear / cal.ear < cfg.eyeSignalClearEarRatio;
+  const blinkClear = ref.blink != null && cal.blink != null && ref.blink - cal.blink >= cfg.eyeSignalClearBlinkRise;
+  return earClear || blinkClear ? 'clear' : 'weak';
+}
+
+/**
  * 本人の基準で見た、目の閉じ具合(開いたとき 0、閉じたとき 1)。目の形と閉じ具合(表情係数)の平均。
  * 目を閉じたときの基準がなければ null。
  */

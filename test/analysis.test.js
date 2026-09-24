@@ -13,6 +13,7 @@ import {
   heightAboveCameraCm,
   computeClosedReference,
   eyeClosureReason,
+  eyeSignalQuality,
   personalClosedScore,
   isEyesClosed,
   learningStyle,
@@ -747,5 +748,14 @@ test('居眠り:メガネで起きて読んでいるときの値(EAR 比 0.64〜
   const b = new Analyzer(cfgP, { setup: 'landscape' });
   b.setCalibration(CALF2);
   assert.ok(run(b, 0, 30, reading).events.some((e) => e.type === 'sleep' || e.type === 'drowsy'));
+});
+
+test('目の読み取りやすさ:キャリブレーションで目を閉じたときの値から判断する(メガネあり=弱い、なし=はっきり)', () => {
+  // 自由学習(メガネあり):EAR 比 0.54、閉じ具合 0.10 → 0.39
+  assert.equal(eyeSignalQuality(CALF2, cfg), 'weak');
+  // 9 回目(メガネなし):EAR 0.207 → 0.05(比 0.24)、閉じ具合 0.24 → 0.64
+  assert.equal(eyeSignalQuality({ ...CAL, ear: 0.207, blink: 0.241, closedRef: { ear: 0.05, blink: 0.639 } }, cfg), 'clear');
+  // 目を閉じたことを確かめられなかった
+  assert.equal(eyeSignalQuality({ ...CAL, closedRef: null }, cfg), 'weak');
 });
 
