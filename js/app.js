@@ -449,7 +449,7 @@ function calibrationStep(f) {
 }
 
 // 本人の「目を閉じたとき」の基準を取る。カメラ・置き方・メガネで閉じたときの値が変わるため(8 回目)。
-// 今は判定に使わず、記録だけしている(config.js の usePersonalClosed)
+// この値にかなり近い状態が続いたときだけ閉眼とする(config.js の personalCloseScore)
 function startClosedCalibration(cal) {
   S.phase = 'calibratingClosed';
   S.pendingCal = cal;

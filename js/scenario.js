@@ -17,6 +17,7 @@ export const DIAGNOSTIC_METRICS = [
   'earRatio',
   'eyesClosed',
   'closedScore',
+  'closedScoreSmooth',
   'eyeLookDown',
   'eyeLookUp',
   'eyeLookSide',

@@ -308,9 +308,10 @@ export function personalClosedScore(f, cal) {
  * 'down' 深くうつむいていて EAR がとても小さい / 'ear' EAR がはっきり小さい /
  * 'earBlink' EAR がやや小さく閉じ具合もやや高い / 'blink' 閉じ具合が高い / 'personal' 本人の目を閉じたときの基準に近い
  */
-export function eyeClosureReason(f, cal, cfg) {
+export function eyeClosureReason(f, cal, cfg, personalScore) {
   if (!f.faceVisible) return null;
-  const personal = cfg.usePersonalClosed ? personalClosedScore(f, cal) : null;
+  // personalScore:本人の基準での閉じ具合(直近数秒の中央値)。渡されなければこのフレームの値を使う
+  const personal = !cfg.usePersonalClosed ? null : personalScore !== undefined ? personalScore : personalClosedScore(f, cal);
   const calBlink = cal?.blink ?? 0.2;
   const calEar = cal?.ear ?? null;
   const blinkThr = clamp(calBlink + cfg.blinkMarginOverCal, cfg.blinkMin, cfg.blinkMax);
@@ -426,6 +427,7 @@ export class Analyzer {
     this.handMotion = new HandMotion(cfg);
     this.handSamples = [];
     this.writeSamples = [];
+    this.personalSamples = [];
     this.faceSamples = [];
     this.headSamples = [];
     this.prevNose = null;
@@ -517,7 +519,12 @@ export class Analyzer {
     // 手が顔にかかっているときは、目が隠れて「閉じている」と誤判定しやすい(6 回目:顔を触る場面で居眠りと判定された)。
     // そのあいだは閉眼として数えない
     const handOnFace = handCoversFace(f);
-    const closedBy = handOnFace ? null : eyeClosureReason(f, cal, cfg);
+    // 本人の基準での閉じ具合は、一瞬の跳ねに反応しないよう直近の中央値を使う
+    const closedScore = personalClosedScore(f, cal);
+    if (closedScore != null) this.personalSamples.push({ t, v: closedScore });
+    this.personalSamples = this.personalSamples.filter((x) => t - x.t <= cfg.personalSmoothSec * 1000);
+    const closedScoreSmooth = f.faceVisible ? median(this.personalSamples.map((x) => x.v)) : null;
+    const closedBy = handOnFace ? null : eyeClosureReason(f, cal, cfg, closedScoreSmooth);
     const closed = closedBy != null;
     if (f.faceVisible) {
       this.perclos.push({ t, dt: dtSec, closed });
@@ -720,7 +727,8 @@ export class Analyzer {
         earRatio: cal?.ear && f.ear != null ? f.ear / cal.ear : null,
         eyesClosed: closed ? 1 : 0,
         closedBy,
-        closedScore: personalClosedScore(f, cal),
+        closedScore,
+        closedScoreSmooth,
         eyeLookDown: f.eyeLookDown ?? null,
         eyeLookUp: f.eyeLookUp ?? null,
         eyeLookSide: f.eyeLookSide ?? null,
