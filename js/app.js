@@ -12,6 +12,7 @@ import {
   extractFeatures,
   scoreMinute,
 } from './analysis.js';
+import { SessionDiagnostics } from './diagnostics.js';
 import { SCENARIO, evaluatePhase, phaseAt } from './scenario.js';
 import { createVision } from './vision.js';
 import { Voice } from './voice.js';
@@ -455,6 +456,9 @@ function startRunning(cal) {
   S.lastT = null;
   S.manualAway = false;
   S.deviceMovedAt = null;
+  S.lastDrowsyBeepAt = null;
+  // 自由に学習:状態ごとの数値の分布と、警告の直前の様子を記録する(検証シナリオは場面ごとに記録している)
+  S.diag = S.opts.mode === 'free' ? new SessionDiagnostics() : null;
   S.samples = {};
   S.scenarioIndex = -1;
   S.inTransition = null;
@@ -499,7 +503,11 @@ function notify(ev) {
       S.voice.stopAlarm();
       break;
     case 'drowsy':
-      if (!quiet) S.voice.beep({ freq: 660 });
+      // 判定がちらついて何度も鳴らないよう、一定の間隔をあける
+      if (!quiet && (S.lastDrowsyBeepAt == null || ev.t - S.lastDrowsyBeepAt >= S.cfg.drowsyBeepMinSec * 1000)) {
+        S.lastDrowsyBeepAt = ev.t;
+        S.voice.beep({ freq: 660 });
+      }
       break;
     case 'away_start':
       S.voice.stopAlarm();
@@ -536,7 +544,11 @@ function runStep(f) {
   else {
     res = S.analyzer.update(f);
     kind = res.away ? 'away' : res.state;
-    for (const ev of res.events) addEvent(ev);
+    S.diag?.add({ t, dt, state: kind, metrics: res.metrics });
+    for (const ev of res.events) {
+      S.diag?.alert(ev, S.startT);
+      addEvent(ev);
+    }
   }
   S.recorder.add(t, dt, kind);
 
@@ -686,6 +698,7 @@ function finish(reason) {
     minutes: S.recorder.minutes.map((m, i) => ({ ...m, score: summary.scores[i] })),
     events: S.recorder.events.map((e) => ({ type: e.type, sec: Math.round(((e.t - S.startT) / 1000) * 10) / 10 })),
     scenario: S.opts.mode === 'scenario' ? SCENARIO.map((p) => evaluatePhase(p, S.samples[p.id] || [], { setup: S.opts.setup })) : null,
+    diagnostics: S.diag ? S.diag.result() : null,
     perf: {
       avgMs: all.length ? all.reduce((s, x) => s + x, 0) / all.length : 0,
       p95Ms: percentile(all, 0.95),

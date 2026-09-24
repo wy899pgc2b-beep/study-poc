@@ -128,6 +128,8 @@ export function extractFeatures(frame, cfg) {
     } else {
       f.blink = null;
     }
+    // 【記録のみ】視線の下向き(表情係数)。目を閉じたのか、視線を下げただけなのかを見分けられるかを調べる
+    f.eyeLookDown = bs && bs.eyeLookDownLeft != null && bs.eyeLookDownRight != null ? (bs.eyeLookDownLeft + bs.eyeLookDownRight) / 2 : null;
 
     const a = toPx(lm[FACE.leftOuter], W, H);
     const b = toPx(lm[FACE.rightOuter], W, H);
@@ -251,9 +253,14 @@ export function estimateEyeDeskCm(f, cal) {
   return cal.cameraHeightCm + heightAboveCameraCm({ depthCm: f.camDistCm, verticalOffsetCm: f.verticalOffsetCm }, tilt);
 }
 
-/** 閉眼の判定(設計書 4.8)。下を向くとまぶたが閉じて見えるので、キャリブレーション値で補正する。 */
-export function isEyesClosed(f, cal, cfg) {
-  if (!f.faceVisible) return false;
+/**
+ * 閉眼の判定(設計書 4.8)。下を向くとまぶたが閉じて見えるので、キャリブレーション値で補正する。
+ * 閉じていると判定した理由を返す(閉じていなければ null)。
+ * 'down' 深くうつむいていて EAR がとても小さい / 'ear' EAR がはっきり小さい /
+ * 'earBlink' EAR がやや小さく閉じ具合もやや高い / 'blink' 閉じ具合が高い
+ */
+export function eyeClosureReason(f, cal, cfg) {
+  if (!f.faceVisible) return null;
   const calBlink = cal?.blink ?? 0.2;
   const calEar = cal?.ear ?? null;
   const blinkThr = clamp(calBlink + cfg.blinkMarginOverCal, cfg.blinkMin, cfg.blinkMax);
@@ -261,17 +268,21 @@ export function isEyesClosed(f, cal, cfg) {
   const lookingFurtherDown = cal?.pitchDeg != null && f.pitchDeg - cal.pitchDeg > cfg.lookingDownExtraDeg;
 
   // 深くうつむいているときは、まぶたが下がって見えるので、目の形がはっきり閉じているときだけ閉眼とする
-  if (lookingFurtherDown) return earRatio != null && earRatio < cfg.earRatioStrongWhenDown;
+  if (lookingFurtherDown) return earRatio != null && earRatio < cfg.earRatioStrongWhenDown ? 'down' : null;
   // 目の形(EAR)がはっきり小さい
-  if (earRatio != null && earRatio < cfg.earRatioAlone) return true;
-  if (f.blink == null) return earRatio != null && earRatio < cfg.earRatioStrong;
+  if (earRatio != null && earRatio < cfg.earRatioAlone) return 'ear';
+  if (f.blink == null) return earRatio != null && earRatio < cfg.earRatioStrong ? 'ear' : null;
   // 目の形がやや小さく、閉じ具合もやや高い(4 回目:閉じ具合が基準の境目でちらついた)。
   // 目の形だけでは判定しない(7 回目:低い位置のカメラでは、読むだけで EAR 比が 0.6〜0.75 に下がった)
   const blinkWithEar = Math.max(blinkThr - cfg.blinkSlackWithEar, cfg.blinkMinWithEar);
-  if (earRatio != null && earRatio < cfg.earRatioStrong && f.blink >= blinkWithEar) return true;
+  if (earRatio != null && earRatio < cfg.earRatioStrong && f.blink >= blinkWithEar) return 'earBlink';
   // 閉じ具合が高く、目の形も基準より小さい
-  if (f.blink >= blinkThr) return earRatio == null || earRatio < cfg.earRatioWithBlink;
-  return false;
+  if (f.blink >= blinkThr && (earRatio == null || earRatio < cfg.earRatioWithBlink)) return 'blink';
+  return null;
+}
+
+export function isEyesClosed(f, cal, cfg) {
+  return eyeClosureReason(f, cal, cfg) != null;
 }
 
 /** 指先が顔の範囲(少し広げたもの)に入っているか。 */
@@ -359,6 +370,7 @@ export class Analyzer {
     this.prev = null;
     this.handMotion = new HandMotion(cfg);
     this.handSamples = [];
+    this.writeSamples = [];
     this.faceSamples = [];
     this.headSamples = [];
     this.prevNose = null;
@@ -424,6 +436,11 @@ export class Analyzer {
     const pinch = pinches.length ? Math.min(...pinches) : null;
     const penGrip = pinch != null && pinch < cfg.penGripPinchMax;
     const writing = handsOnDesk.length > 0 && handSpeed >= cfg.writeSpeedMin;
+    // 直近 10 秒のうち書いていた時間の割合
+    this.writeSamples.push({ t, dt: dtSec, w: writing });
+    this.writeSamples = this.writeSamples.filter((x) => t - x.t <= cfg.sleepClosedSec * 1000);
+    const writeTotal = this.writeSamples.reduce((a, x) => a + x.dt, 0);
+    const writeShare = writeTotal > 0 ? this.writeSamples.reduce((a, x) => a + (x.w ? x.dt : 0), 0) / writeTotal : 0;
 
     // 顔の検出率(直近 10 秒)
     this.faceSamples.push({ t, v: f.faceVisible ? 1 : 0 });
@@ -434,7 +451,8 @@ export class Analyzer {
     // 手が顔にかかっているときは、目が隠れて「閉じている」と誤判定しやすい(6 回目:顔を触る場面で居眠りと判定された)。
     // そのあいだは閉眼として数えない
     const handOnFace = handCoversFace(f);
-    const closed = isEyesClosed(f, cal, cfg) && !handOnFace;
+    const closedBy = handOnFace ? null : eyeClosureReason(f, cal, cfg);
+    const closed = closedBy != null;
     if (f.faceVisible) {
       this.perclos.push({ t, dt: dtSec, closed });
     }
@@ -452,9 +470,10 @@ export class Analyzer {
     // 閉眼の判定は境目の値でちらつく(4 回目:閉じたまま 1 秒だけ「開いた」と出て、10 秒の計測がやり直しになった)。
     // 短い途切れは閉じたままとみなす
     const closedSec = this.sustainedGap('closed', closed && !writing, t, cfg.closedGapSec);
-    // 居眠りは手の動きに関係なく、目を閉じた時間で判定する(3 回目:手を組んだのを書く動作と誤判定し、居眠りを見逃した)。
-    // 書いている間は「うとうと」にだけしない
+    // 居眠りは、書いている間も目を閉じた時間で測る(3 回目:手を組んだのを書く動作と誤判定し、居眠りを見逃した。今は手の速さで判定する)。
+    // ただし、その間ほとんど書いていたなら居眠りにしない(自由に学習・8 回目の前:書いている最中に居眠りと誤判定した)
     const closedRawSec = this.sustainedGap('closedRaw', closed, t, cfg.closedGapSec);
+    const closedAsleep = closedRawSec >= cfg.sleepClosedSec && writeShare < cfg.sleepMaxWriteShare;
 
     // --- 頭のうつむき具合(設計書 4.9)
     const seg = f.seg ?? this.lastSeg;
@@ -524,7 +543,7 @@ export class Analyzer {
     // --- 状態の決定
     let state;
     if (!present) state = 'absent';
-    else if (closedRawSec >= cfg.sleepClosedSec || faceDownSec >= cfg.faceDownSec) state = 'sleep';
+    else if (closedAsleep || faceDownSec >= cfg.faceDownSec) state = 'sleep';
     else if ((closedSec >= cfg.drowsyClosedSec || perclos >= cfg.perclosDrowsy) && !writing) state = 'drowsy';
     else if (lookingAway) state = 'lookaway';
     else if (writing) state = 'work';
@@ -629,6 +648,10 @@ export class Analyzer {
         blink: f.blink,
         earRatio: cal?.ear && f.ear != null ? f.ear / cal.ear : null,
         eyesClosed: closed ? 1 : 0,
+        closedBy,
+        eyeLookDown: f.eyeLookDown ?? null,
+        writing: writing ? 1 : 0,
+        writeShare,
         handOnFace: handOnFace ? 1 : 0,
         faceVisible: f.faceVisible ? 1 : 0,
         faceRate,

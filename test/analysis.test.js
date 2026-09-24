@@ -11,6 +11,7 @@ import {
   extractFeatures,
   focalLengthPx,
   heightAboveCameraCm,
+  eyeClosureReason,
   isEyesClosed,
   learningStyle,
   scoreMinute,
@@ -236,12 +237,30 @@ test('作業:顔の高さで動いている手は作業にしない', () => {
   assert.equal(run(a, 0, 3, (t) => face(t, { hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.35)] })).last.state, 'think');
 });
 
-test('居眠り:書いている間は短く目を閉じても「うとうと」にしないが、10 秒閉じていれば居眠り', () => {
+test('居眠り:書き続けている間は、目を閉じていると判定されても居眠りにしない。手が止まって閉じ続けていれば居眠り(自由に学習・8 回目の前の不具合)', () => {
   const a = new Analyzer(cfg);
   a.setCalibration(CAL);
-  const make = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] });
-  assert.equal(run(a, 0, 5, make).last.state, 'work');
-  assert.equal(run(a, 5200, 6, make).last.state, 'sleep');
+  const writing = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] });
+  const r = run(a, 0, 12, writing);
+  assert.equal(r.last.state, 'work');
+  assert.ok(!r.events.some((e) => e.type === 'sleep'));
+  assert.ok(r.last.metrics.writeShare > 0.9);
+  // 手を止めて(ペンを持ったまま)目を閉じ続ける → 直近 10 秒の書いていた割合が半分を切ったら居眠り
+  const still = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5, 0.85)] });
+  const r2 = run(a, 12200, 8, still);
+  assert.ok(r2.events.some((e) => e.type === 'sleep'));
+  assert.equal(r2.last.state, 'sleep');
+});
+
+test('閉眼:読む・書くときの閉じ具合(2〜7 回目の 90% の値は 0.53 以下)では、EAR 比が基準並みなら閉眼にしない', () => {
+  const cal = { ...CAL, blink: 0.245, ear: 0.2 };
+  assert.equal(eyeClosureReason(face(0, { blink: 0.53, ear: 0.18 }), cal, cfg), null);
+  // 閉じ具合 0.58 以上(目を閉じたときの 10% の値)なら閉眼
+  assert.equal(eyeClosureReason(face(0, { blink: 0.58, ear: 0.18 }), cal, cfg), 'blink');
+  // 理由を返す
+  assert.equal(eyeClosureReason(face(0, { blink: 0.2, ear: 0.08 }), cal, cfg), 'ear');
+  assert.equal(eyeClosureReason(face(0, { blink: 0.52, ear: 0.14 }), cal, cfg), 'earBlink');
+  assert.equal(eyeClosureReason(face(0, { pitchDeg: 30, blink: 0.9, ear: 0.08 }), { ...cal, pitchDeg: 5 }, cfg), 'down');
 });
 
 test('癖:手が顔に 1 秒以上あれば「顔を触る」、5 秒以内の連続は 1 回にまとめる', () => {

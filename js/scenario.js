@@ -16,6 +16,8 @@ export const DIAGNOSTIC_METRICS = [
   'blink',
   'earRatio',
   'eyesClosed',
+  'eyeLookDown',
+  'writeShare',
   'yawDev',
   'pitchUp',
   'eyeDeskCm',
@@ -44,7 +46,8 @@ const STATE_LETTERS = { work: 'w', think: 't', lookaway: 'l', drowsy: 'd', sleep
  * 1 秒ごとの様子を文字列にする(しきい値の調整用)。
  * state:w=作業 t=思考 l=よそ見 d=うとうと s=居眠り a=不在 A=離席 p=一時停止
  * face(顔を検出)・closed(閉眼)・grip(ペンの形)・doze(前に傾いた居眠りの候補・試験中)・
- * bow(うつむいている)・head(髪の映り方から頭があると判定):1=あり 0=なし -=不明
+ * bow(うつむいている)・head(髪の映り方から頭があると判定)・write(書いている):1=あり 0=なし -=不明
+ * by:閉眼と判定した理由 e=目の形 b=目の形と閉じ具合 k=閉じ具合 d=深くうつむいて目の形 .=開眼 -=不明
  */
 export function phaseTimeline(samples, sec) {
   const n = Math.ceil(sec);
@@ -71,8 +74,17 @@ export function phaseTimeline(samples, sec) {
     doze: buckets.map((b) => flag(b, 'dozeShadow')).join(''),
     bow: buckets.map((b) => flag(b, 'lookingDown')).join(''),
     head: buckets.map((b) => flag(b, 'segHead')).join(''),
+    write: buckets.map((b) => flag(b, 'writing')).join(''),
+    by: buckets
+      .map((b) => {
+        const v = b.filter((s) => s.metrics).map((s) => s.metrics.closedBy ?? '.');
+        return v.length ? CLOSED_BY_LETTERS[majority(v)] ?? '?' : '-';
+      })
+      .join(''),
   };
 }
+
+const CLOSED_BY_LETTERS = { ear: 'e', earBlink: 'b', blink: 'k', down: 'd', '.': '.' };
 
 function quantile(sorted, q) {
   if (!sorted.length) return null;
@@ -83,9 +95,9 @@ function quantile(sorted, q) {
 }
 
 /** 数値の分布(10%・中央値・90%)。 */
-export function metricStats(samples) {
+export function metricStats(samples, keys = DIAGNOSTIC_METRICS) {
   const out = {};
-  for (const key of DIAGNOSTIC_METRICS) {
+  for (const key of keys) {
     const v = samples
       .map((s) => s.metrics?.[key])
       .filter((x) => Number.isFinite(x))
