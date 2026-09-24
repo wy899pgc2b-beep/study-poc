@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
+  <!-- 通信先を AI ライブラリ(jsdelivr)とモデル(storage.googleapis.com)の取得だけに制限する。
+       MediaPipe が送る利用統計(odml.pa.googleapis.com)もこれで止まる。映像はどこにも送らない。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:">
+  <title>学習態度AI 技術検証</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+
+    <!-- 1. 設定 -->
+    <section id="screen-setup" class="screen">
+      <header class="page-head">
+        <h1>学習態度AI 技術検証</h1>
+        <p class="lead">スマホのカメラで学習中の様子を撮影し、AI の判定がどのくらい正しいかを確かめる試作品です。映像は端末の中だけで処理し、保存も送信もしません。</p>
+      </header>
+
+      <form id="setup-form" class="stack">
+        <fieldset class="card">
+          <legend>検証の種類</legend>
+          <label class="choice"><input type="radio" name="mode" value="scenario" checked>
+            <span><b>検証シナリオ</b>(約 3 分)<br><small>音声の指示どおりに「読む・書く・目を閉じる・よそ見・顔を触る・顔を近づける・離席」を行い、各場面の判定が正しいかを調べます。</small></span></label>
+          <label class="choice"><input type="radio" name="mode" value="free">
+            <span><b>自由に学習</b><br><small>普段どおりに学習し、1 分ごとの集中度や処理の速さ・電池の減り方を確かめます。</small></span></label>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend>カメラと置き方</legend>
+          <div class="row">
+            <label class="field">カメラ
+              <select name="camera">
+                <option value="back">バックカメラ(画面は反対向き)</option>
+                <option value="front">フロントカメラ(画面を見られる)</option>
+              </select>
+            </label>
+            <label class="field">置き方
+              <select name="setup">
+                <option value="stand">正面に立てる</option>
+                <option value="flat">平置き(下から撮影)</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">学習項目
+            <input name="subject" type="text" value="数学" maxlength="20">
+          </label>
+          <label class="field">正しい姿勢での目と机の距離(cm)
+            <input name="eyeDesk" type="number" min="15" max="80" step="1" value="35" inputmode="numeric">
+            <small>定規などで測った値。距離の推定の基準にします。</small>
+          </label>
+        </fieldset>
+
+        <details class="card">
+          <summary>詳しい設定</summary>
+          <div class="stack">
+            <label class="field">解析の頻度
+              <select name="fps">
+                <option value="2">2 回/秒(省電力)</option>
+                <option value="5" selected>5 回/秒(標準)</option>
+                <option value="10">10 回/秒</option>
+              </select>
+            </label>
+            <label class="field">離席と判定するまでの秒数
+              <input name="awaySec" type="number" min="5" max="60" value="20" inputmode="numeric">
+            </label>
+            <label class="field">目と机の距離の警告しきい値(cm)
+              <input name="eyeDeskThreshold" type="number" min="20" max="45" value="30" inputmode="numeric">
+            </label>
+            <label class="field">カメラの画角(長辺・度)
+              <input name="fov" type="number" min="40" max="120" value="69" inputmode="numeric">
+              <small>iPhone の広角カメラは約 69°。距離の推定に使います。</small>
+            </label>
+            <label class="check"><input type="checkbox" name="autoAway" checked> 離席を自動で検知する</label>
+            <label class="check"><input type="checkbox" name="gpu" checked> GPU を使う(動かないときはオフ)</label>
+            <label class="check"><input type="checkbox" name="voice" checked> 音声で知らせる</label>
+            <label class="field">開始時の電池残量(%・任意)
+              <input name="batteryStart" type="number" min="1" max="100" inputmode="numeric" placeholder="例:80">
+              <small>iPhone の Safari は電池残量を読めないため、手で入力してください。</small>
+            </label>
+          </div>
+        </details>
+
+        <button type="submit" class="primary">カメラを起動する</button>
+        <p class="note">スマホは充電しながら、スタンドに立てて使ってください。カメラ・音声・動きセンサーの許可を求められたら「許可」を選んでください。</p>
+      </form>
+    </section>
+
+    <!-- 2. 読み込み -->
+    <section id="screen-loading" class="screen" hidden>
+      <div class="center stack">
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="loading-text">準備中…</p>
+        <p class="note">初回はモデル(約 17MB)を読み込むため、1 分ほどかかることがあります。</p>
+      </div>
+    </section>
+
+    <!-- 3. 設置ガイド・キャリブレーション・学習中 -->
+    <section id="screen-camera" class="screen" hidden>
+      <div class="topbar">
+        <span id="phase-label" class="chip">設置ガイド</span>
+        <span id="state-chip" class="chip strong">—</span>
+        <span id="elapsed" class="mono">0:00</span>
+      </div>
+
+      <div class="video-wrap">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="overlay"></canvas>
+        <div id="guide-panel" class="guide">
+          <p id="guide-title"><b>スマホの位置を合わせてください</b></p>
+          <ul id="guide-list"></ul>
+          <button id="skip-guide" type="button" class="ghost small">ガイドを省略してキャリブレーションへ</button>
+        </div>
+        <div id="scenario-panel" class="scenario" hidden>
+          <div id="scenario-step" class="scenario-step"></div>
+          <div id="scenario-text" class="scenario-text"></div>
+          <div class="progress"><div id="scenario-progress"></div></div>
+        </div>
+      </div>
+
+      <dl id="live" class="live">
+        <div><dt>集中度(この1分)</dt><dd id="m-focus">—</dd></div>
+        <div><dt>目と机の距離</dt><dd id="m-eyedesk">—</dd></div>
+        <div><dt>目の閉じ具合</dt><dd id="m-blink">—</dd></div>
+        <div><dt>頭の向き(ずれ)</dt><dd id="m-head">—</dd></div>
+        <div><dt>手の動き</dt><dd id="m-hand">—</dd></div>
+        <div><dt>処理速度</dt><dd id="m-perf">—</dd></div>
+      </dl>
+
+      <ol id="event-log" class="event-log" aria-label="検出したできごと"></ol>
+
+      <div class="actions">
+        <button id="btn-dark" type="button" class="ghost">画面を暗くする</button>
+        <button id="btn-away" type="button" class="ghost">離席</button>
+        <button id="btn-finish" type="button" class="danger">終了</button>
+      </div>
+    </section>
+
+    <!-- 4. 結果 -->
+    <section id="screen-result" class="screen" hidden>
+      <header class="page-head">
+        <h1>検証の結果</h1>
+        <p id="result-sub" class="lead"></p>
+      </header>
+      <div id="result-body" class="stack"></div>
+      <div class="actions wrap">
+        <button id="btn-copy" type="button" class="ghost">データをコピー</button>
+        <button id="btn-download" type="button" class="ghost">データを保存</button>
+        <button id="btn-again" type="button" class="primary">もう一度</button>
+      </div>
+      <p class="note">「データをコピー」で得られる JSON には数値の記録だけが含まれ、映像は含まれません。検証結果の共有に使ってください。</p>
+    </section>
+  </main>
+
+  <div id="dark-overlay" hidden>
+    <p>学習中 — タップで表示を戻す</p>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
