@@ -31,6 +31,7 @@ export const DIAGNOSTIC_METRICS = [
   'hairFrac',
   'personFrac',
   'segHead',
+  'covering',
   'poseVisible',
   'cameraTiltDeg',
 ];
@@ -114,6 +115,8 @@ export const SCENARIO = [
     graceSec: 3,
     expect: { states: ['work'], minShare: 0.5 },
     purpose: 'ペンを持って書いている時間を作業と判定できるか',
+    // 平置きでは手元が映らない(5 回目)
+    notIn: { flat: '平置きでは手元が映らないため対象外' },
   },
   {
     id: 'eyes',
@@ -203,7 +206,7 @@ export function phaseAt(elapsedSec, scenario = SCENARIO) {
  * 1 つの場面の判定結果を評価する。
  * samples: [{ phaseElapsed, dt, state, away, flags }]
  */
-export function evaluatePhase(phase, samples) {
+export function evaluatePhase(phase, samples, { setup = 'stand' } = {}) {
   const used = samples.filter((s) => s.phaseElapsed >= phase.graceSec);
   const total = used.reduce((s, x) => s + x.dt, 0);
   const share = {};
@@ -220,6 +223,11 @@ export function evaluatePhase(phase, samples) {
     metrics: metricStats(used),
     timeline: phaseTimeline(samples, phase.sec),
   };
+  if (phase.notIn?.[setup]) {
+    result.pass = null;
+    result.notes.push(phase.notIn[setup]);
+    return result;
+  }
   if (total < 3) {
     result.pass = null;
     result.notes.push('判定できたフレームが少なすぎます');

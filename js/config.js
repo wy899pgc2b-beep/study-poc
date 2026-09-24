@@ -27,6 +27,7 @@ export const DEFAULTS = {
   perclosWindowSec: 60,
   perclosDrowsy: 0.3,
   perclosMinObservedSec: 20, // これより短い観測では PERCLOS を使わない
+  perclosMinFaceRate: 0.7, // 直近 10 秒の顔の検出率がこれ未満なら PERCLOS を使わない
   wakeOpenSec: 2, // 目を開けた状態がこの秒数続いたら目覚めたとみなす
   faceDownSec: 20, // 設計書の初期案は 30 秒。検証シナリオで確かめられるよう 20 秒で試す
   faceGapSec: 2, // 顔の検出のちらつき(この秒数以内の途切れ)は続いているとみなす
@@ -40,6 +41,8 @@ export const DEFAULTS = {
   segMinHairFrac: 0.005, // 画面のうち髪がこれ以上映っていれば、顔や上半身が見えなくても頭があるとみなす
   segHairRatio: 0.5, // …ただしキャリブレーション時の髪の面積のこの割合以上
   segPersonRatio: 0.4, // …かつ人の面積がキャリブレーション時のこの割合以上
+  coverPersonFrac: 0.85, // 人が画面のこれ以上を占め、
+  coverEyeDeskCm: 10, // 顔が見えないか目と机(カメラ)の距離がこれ未満なら、頭がカメラを覆っている(平置きで伏せた)
 
   // 【試験中】前に傾いた居眠りの候補:うつむいたまま、頭も手もほとんど動かない状態が続く
   headMotionWindowSec: 2,

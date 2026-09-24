@@ -415,7 +415,7 @@ function calibrationStep(f) {
 
 function startRunning(cal) {
   S.cal = cal;
-  S.analyzer = new Analyzer(S.cfg, { autoAway: S.opts.autoAway });
+  S.analyzer = new Analyzer(S.cfg, { autoAway: S.opts.autoAway, setup: S.opts.setup });
   S.analyzer.setCalibration(cal);
   S.startT = performance.now();
   S.startedAt = new Date();
@@ -653,7 +653,7 @@ function finish(reason) {
     summary,
     minutes: S.recorder.minutes.map((m, i) => ({ ...m, score: summary.scores[i] })),
     events: S.recorder.events.map((e) => ({ type: e.type, sec: Math.round(((e.t - S.startT) / 1000) * 10) / 10 })),
-    scenario: S.opts.mode === 'scenario' ? SCENARIO.map((p) => evaluatePhase(p, S.samples[p.id] || [])) : null,
+    scenario: S.opts.mode === 'scenario' ? SCENARIO.map((p) => evaluatePhase(p, S.samples[p.id] || [], { setup: S.opts.setup })) : null,
     perf: {
       avgMs: all.length ? all.reduce((s, x) => s + x, 0) / all.length : 0,
       p95Ms: percentile(all, 0.95),

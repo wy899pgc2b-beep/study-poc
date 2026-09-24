@@ -322,9 +322,10 @@ export class HandMotion {
  * フレームごとに状態を判定し、居眠り・癖・姿勢・離席のイベントを出す(設計書 4.4〜4.11)。
  */
 export class Analyzer {
-  constructor(cfg, { autoAway = true } = {}) {
+  constructor(cfg, { autoAway = true, setup = 'stand' } = {}) {
     this.cfg = cfg;
     this.autoAway = autoAway;
+    this.setup = setup;
     this.cal = null;
     this.prev = null;
     this.handMotion = new HandMotion(cfg);
@@ -394,18 +395,27 @@ export class Analyzer {
     const penGrip = pinch != null && pinch < cfg.penGripPinchMax;
     const writing = handsOnDesk.length > 0 && handSpeed >= cfg.writeSpeedMin;
 
+    // 顔の検出率(直近 10 秒)
+    this.faceSamples.push({ t, v: f.faceVisible ? 1 : 0 });
+    this.faceSamples = this.faceSamples.filter((x) => t - x.t <= cfg.faceRateWindowSec * 1000);
+    const faceRate = this.faceSamples.reduce((a, x) => a + x.v, 0) / this.faceSamples.length;
+
     // --- 閉眼・PERCLOS
     const closed = isEyesClosed(f, cal, cfg);
     if (f.faceVisible) {
       this.perclos.push({ t, dt: dtSec, closed });
     }
     // 目覚めたら(目を開けた状態が続いたら)過去の閉眼の記録を消し、アラームがすぐ止まるようにする
-    if (this.sustained('eyesOpen', this.sleepLevel != null && f.faceVisible && !closed, t) >= cfg.wakeOpenSec) {
+    if (this.sustainedGap('eyesOpen', this.sleepLevel != null && f.faceVisible && !closed, t, cfg.faceGapSec) >= cfg.wakeOpenSec) {
       this.perclos = [];
     }
     this.perclos = this.perclos.filter((s) => t - s.t <= cfg.perclosWindowSec * 1000);
     const totalP = this.perclos.reduce((s, x) => s + x.dt, 0);
-    const perclos = totalP >= cfg.perclosMinObservedSec ? this.perclos.reduce((s, x) => s + (x.closed ? x.dt : 0), 0) / totalP : 0;
+    // 顔がいま見えていないときは PERCLOS を使わない(5 回目:居眠りの後、顔が見えない間も古い閉眼の記録で「うとうと」が 1 分近く続いた)
+    const perclos =
+      totalP >= cfg.perclosMinObservedSec && faceRate >= cfg.perclosMinFaceRate
+        ? this.perclos.reduce((s, x) => s + (x.closed ? x.dt : 0), 0) / totalP
+        : 0;
     // 閉眼の判定は境目の値でちらつく(4 回目:閉じたまま 1 秒だけ「開いた」と出て、10 秒の計測がやり直しになった)。
     // 短い途切れは閉じたままとみなす
     const closedSec = this.sustainedGap('closed', closed && !writing, t, cfg.closedGapSec);
@@ -420,17 +430,24 @@ export class Analyzer {
     const seg = f.seg ?? this.lastSeg;
     if (f.seg) this.lastSeg = f.seg;
     const crownDelta = seg?.crownRatio != null && cal?.crownRatio != null ? seg.crownRatio - cal.crownRatio : null;
+    // 頭頂部の割合でうつむきを判断するのは、正面に立てたときだけ(5 回目:平置きでは、うつむいても割合は変わらず、横を向くと増えた)
     const lookingDown =
-      (headRatio != null && headRatio < cfg.headDownRatio) || (crownDelta != null && crownDelta > cfg.crownBowDelta);
+      (headRatio != null && headRatio < cfg.headDownRatio) ||
+      (this.setup !== 'flat' && crownDelta != null && crownDelta > cfg.crownBowDelta);
     // 顔も上半身も見つからなくても、頭(髪)が大きく映っていれば席にいる(3 回目:机に伏せると上半身も検出できず「離席」になった)
     const segHead =
       seg != null && cal?.hairFrac && cal?.personFrac
         ? seg.hairFrac >= Math.max(cfg.segMinHairFrac, cal.hairFrac * cfg.segHairRatio) && seg.personFrac >= cal.personFrac * cfg.segPersonRatio
         : false;
-    const present = f.present || segHead;
+    // 頭がカメラを覆っている:人が画面のほとんどを占め、顔が見えないか目がカメラのすぐ近くにある
+    // (5 回目:平置きのスマホの上に伏せると、顔がカメラを覆い、伏せていると判定できなかった)
+    const nearEyeDesk = estimateEyeDeskCm(f, cal);
+    const covering =
+      seg != null && seg.personFrac >= cfg.coverPersonFrac && (!f.faceVisible || (nearEyeDesk != null && nearEyeDesk < cfg.coverEyeDeskCm));
+    const present = f.present || segHead || covering;
     // うつ伏せ:顔は見えず、頭が低い(上半身が映っていれば肩からの高さ、映っていなければ髪だけが見えている)。
     // 顔の検出のちらつきで途切れないよう、短い途切れは許す
-    const faceDown = !f.faceVisible && !writing && ((f.poseVisible && headLow) || (!f.poseVisible && segHead));
+    const faceDown = !writing && ((!f.faceVisible && ((f.poseVisible && headLow) || (!f.poseVisible && segHead))) || covering);
     const faceDownSec = this.sustainedGap('faceDown', faceDown, t, cfg.faceGapSec);
 
     // --- 離席(設計書 3.10, 4.11)
@@ -443,6 +460,7 @@ export class Analyzer {
     }
     if (this.autoAway && !this.away && this.absentSince != null && (t - this.absentSince) / 1000 >= cfg.awaySec) {
       this.away = true;
+      this.perclos = [];
       events.push({ type: 'away_start', t: this.absentSince });
     }
     if (this.away && f.faceVisible && this.presentSince != null && (t - this.presentSince) / 1000 >= cfg.returnSec) {
@@ -474,7 +492,10 @@ export class Analyzer {
     const level = state === 'sleep' ? 'sleep' : state === 'drowsy' ? 'drowsy' : null;
     if (level !== this.sleepLevel) {
       if (level) events.push({ type: level, t });
-      else if (this.sleepLevel && present) events.push({ type: 'wake', t });
+      else if (this.sleepLevel && present) {
+        events.push({ type: 'wake', t });
+        this.perclos = [];
+      }
       this.sleepLevel = level;
     }
 
@@ -519,11 +540,6 @@ export class Analyzer {
     // 本人の基準(キャリブレーション時の距離)より一定の割合以上近づいたら「近すぎ」(設計書 3.9、決定事項 D-7)
     const eyeDeskThresholdCm = cal?.measuredEyeDeskCm ? cal.measuredEyeDeskCm * (1 - cfg.eyeDeskCloseRatio) : null;
     const tooClose = (eyeDeskCm != null && eyeDeskThresholdCm != null && eyeDeskCm < eyeDeskThresholdCm) || headDropped;
-
-    // 顔の検出率(直近 10 秒)
-    this.faceSamples.push({ t, v: f.faceVisible ? 1 : 0 });
-    this.faceSamples = this.faceSamples.filter((x) => t - x.t <= cfg.faceRateWindowSec * 1000);
-    const faceRate = this.faceSamples.reduce((a, x) => a + x.v, 0) / this.faceSamples.length;
 
     // 頭の動き(肩幅 / 秒、直近の中央値)
     if (f.noseN && this.prevNose && dtSec > 0) this.headSamples.push({ t, v: dist(f.noseN, this.prevNose) / dtSec });
@@ -583,6 +599,7 @@ export class Analyzer {
         hairFrac: seg?.hairFrac ?? null,
         personFrac: seg?.personFrac ?? null,
         segHead: segHead ? 1 : 0,
+        covering: covering ? 1 : 0,
         poseVisible: f.poseVisible ? 1 : 0,
         headRatio,
         slouchRel: cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null,

@@ -85,3 +85,10 @@ test('判定できたフレームが少なければ判定なし', () => {
   const r = evaluatePhase(byId('write'), samples(4, () => ({ state: 'work' })));
   assert.equal(r.pass, null);
 });
+
+test('平置きでは「書く」を評価しない(手元が映らない)', () => {
+  const r = evaluatePhase(byId('write'), samples(25, () => ({ state: 'think' })), { setup: 'flat' });
+  assert.equal(r.pass, null);
+  assert.ok(r.notes[0].includes('平置き'));
+  assert.equal(evaluatePhase(byId('write'), samples(25, () => ({ state: 'think' }))).pass, false);
+});

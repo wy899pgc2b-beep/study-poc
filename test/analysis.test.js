@@ -491,3 +491,43 @@ test('設置ガイド:平置きでは肩が映っていなくてもよい', () =
   assert.equal(checkFraming(f).ok, false);
   assert.equal(checkFraming(f, { setup: 'flat' }).ok, true);
 });
+
+test('うとうと:居眠りの後に顔が見えなくなっても、古い閉眼の記録で「うとうと」を続けない(5 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration({ ...CAL, headHeight: 1 });
+  // 25 秒目を閉じて居眠り → その後、顔を上げたまま横を向く(顔は見えず、頭の高さはふだんどおり)
+  run(a, 0, 25, (t) => face(t, { blink: 0.9, ear: 0.08 }));
+  const r = run(a, 25200, 8, (t) => lostFace(t, { headHeight: 1.1 }));
+  assert.equal(r.last.state, 'lookaway');
+  assert.equal(r.last.metrics.perclos, 0);
+});
+
+test('よそ見:平置きでは頭頂部の割合でうつむきを判断しない(5 回目:横を向くと割合が増えた)', () => {
+  const cal = { ...CAL, headHeight: 1, crownRatio: 0.35, hairFrac: 0.06, personFrac: 0.23 };
+  const turned = (t) => lostFace(t, { headHeight: 1.13, seg: { crownRatio: 0.73, hairFrac: 0.036, faceSkinFrac: 0.01, personFrac: 0.15 } });
+  const flat = new Analyzer(cfg, { setup: 'flat' });
+  flat.setCalibration(cal);
+  assert.equal(run(flat, 0, 5, turned).last.state, 'lookaway');
+  const stand = new Analyzer(cfg, { setup: 'stand' });
+  stand.setCalibration(cal);
+  assert.notEqual(run(stand, 0, 5, turned).last.state, 'lookaway');
+});
+
+test('居眠り:平置きのスマホの上に伏せて顔がカメラを覆うと、20 秒で居眠り(5 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg, { setup: 'flat' });
+  a.setCalibration({ ...CAL, headHeight: 1, crownRatio: 0.35, hairFrac: 0.06, personFrac: 0.23 });
+  const covered = { crownRatio: 0, hairFrac: 0, faceSkinFrac: 0.2, personFrac: 0.93 };
+  // 顔は 4 割ほどしか検出できず、見えたときは目がカメラのすぐ近く(推定 4cm)
+  const make = (t) =>
+    t % 2500 < 1000
+      ? face(t, { seg: covered, camDistCm: 4, verticalOffsetCm: 0, headHeight: 0.6 })
+      : lostFace(t, { headHeight: 0.6, seg: covered });
+  const r = run(a, 0, 22, make);
+  assert.ok(r.events.some((e) => e.type === 'sleep'));
+  assert.equal(r.last.away, false);
+  // 顔を近づけて読んでいるだけ(人の面積 0.75、距離 16cm)なら伏せていない
+  const b = new Analyzer(cfg, { setup: 'flat' });
+  b.setCalibration({ ...CAL, headHeight: 1, crownRatio: 0.35, hairFrac: 0.06, personFrac: 0.23 });
+  const close = (t) => face(t, { seg: { crownRatio: 0.38, hairFrac: 0.2, faceSkinFrac: 0.3, personFrac: 0.75 }, camDistCm: 16, verticalOffsetCm: 0 });
+  assert.equal(run(b, 0, 22, close).last.metrics.covering, 0);
+});
