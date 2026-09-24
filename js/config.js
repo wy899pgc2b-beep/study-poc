@@ -88,4 +88,7 @@ export const DEFAULTS = {
 };
 
 // 設置スタイルごとのカメラの上向きの傾き(度)。平置きは真上を向く。
-export const SETUP_TILT_DEG = { stand: 0, flat: 90 };
+export const SETUP_TILT_DEG = { stand: 0, tilt: 45, flat: 90 };
+
+// 斜め置きの目安の角度(カメラが水平より上を向く角度)
+export const TILT_RANGE_DEG = { min: 35, max: 55 };

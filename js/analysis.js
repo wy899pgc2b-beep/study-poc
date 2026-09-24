@@ -203,8 +203,8 @@ export function checkFraming(f, { setup = 'stand' } = {}) {
     if (size < 0.1) issues.push({ code: 'too_far', message: 'スマホが遠すぎます', speech: 'スマホを少し近づけてください' });
     if (size > 0.45) issues.push({ code: 'too_close', message: 'スマホが近すぎます', speech: 'スマホを少し遠ざけてください' });
   }
-  // 平置き(下から撮影)では肩が映らないことが多いので、肩は求めない
-  if (!f.poseVisible && setup !== 'flat') {
+  // 正面に立てるとき以外(斜め置き・平置き)は肩が映らないことが多いので、肩は求めない
+  if (!f.poseVisible && setup === 'stand') {
     issues.push({ code: 'no_shoulders', message: '肩が映っていません', speech: '肩まで映るように、スマホを少し遠ざけてください' });
   }
   if (f.brightness != null && f.brightness < 50) {
@@ -430,10 +430,11 @@ export class Analyzer {
     const seg = f.seg ?? this.lastSeg;
     if (f.seg) this.lastSeg = f.seg;
     const crownDelta = seg?.crownRatio != null && cal?.crownRatio != null ? seg.crownRatio - cal.crownRatio : null;
-    // 頭頂部の割合でうつむきを判断するのは、正面に立てたときだけ(5 回目:平置きでは、うつむいても割合は変わらず、横を向くと増えた)
+    // 頭頂部の割合でうつむきを判断するのは、正面に立てたときだけ(5 回目:平置きでは、うつむいても割合は変わらず、横を向くと増えた。
+    // 斜め置きでの変わり方はまだ分からないので、記録だけして判断には使わない)
     const lookingDown =
       (headRatio != null && headRatio < cfg.headDownRatio) ||
-      (this.setup !== 'flat' && crownDelta != null && crownDelta > cfg.crownBowDelta);
+      (this.setup === 'stand' && crownDelta != null && crownDelta > cfg.crownBowDelta);
     // 顔も上半身も見つからなくても、頭(髪)が大きく映っていれば席にいる(3 回目:机に伏せると上半身も検出できず「離席」になった)
     const segHead =
       seg != null && cal?.hairFrac && cal?.personFrac

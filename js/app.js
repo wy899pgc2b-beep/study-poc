@@ -1,6 +1,6 @@
 // 技術検証アプリの画面の流れ:設定 → 読み込み → 設置ガイド → キャリブレーション → 学習中 → 結果
 
-import { DEFAULTS, SETUP_TILT_DEG } from './config.js';
+import { DEFAULTS, SETUP_TILT_DEG, TILT_RANGE_DEG } from './config.js';
 import {
   Analyzer,
   SessionRecorder,
@@ -348,7 +348,12 @@ function startGuide() {
   $('event-log').replaceChildren();
   $('btn-away').textContent = '離席';
   show('camera');
-  say(S.opts.setup === 'flat' ? 'スマホの位置を合わせます。顔が映るように置いてください' : 'スマホの位置を合わせます。顔と肩が映るように置いてください', { interrupt: true });
+  const guideSpeech = {
+    stand: 'スマホの位置を合わせます。顔と肩が映るように置いてください',
+    tilt: 'スマホの位置を合わせます。スマホを45度くらいに寝かせて、顔と手元が映るように置いてください',
+    flat: 'スマホの位置を合わせます。顔が映るように置いてください',
+  };
+  say(guideSpeech[S.opts.setup] ?? guideSpeech.stand, { interrupt: true });
   startLoop();
 }
 
@@ -359,10 +364,20 @@ function guideStep(f) {
     ['顔が映っている', !has('no_face')],
     ['顔が画面の中央付近にある', f.faceVisible && !has('off_center')],
     ['スマホとの距離がちょうどよい', f.faceVisible && !has('too_far') && !has('too_close')],
-    [S.opts.setup === 'flat' ? '(任意)肩まで映っている' : '肩まで映っている', f.poseVisible],
+    [S.opts.setup === 'stand' ? '肩まで映っている' : '(任意)肩まで映っている', f.poseVisible],
     ['明るさが十分', !has('dark')],
     ['(任意)手元の手が映っている', f.hands.length > 0],
   ];
+  // 斜め置き:端末の傾きをその場で表示し、目安から外れていれば音声で知らせる(位置合わせは止めない)
+  const tilt = f.cameraTiltDeg;
+  if (S.opts.setup === 'tilt') {
+    const inRange = tilt != null && tilt >= TILT_RANGE_DEG.min && tilt <= TILT_RANGE_DEG.max;
+    const label = tilt == null ? '(任意)スマホの傾き:センサーを読めません' : `(任意)スマホの傾き ${Math.round(tilt)}°(目安 ${TILT_RANGE_DEG.min}〜${TILT_RANGE_DEG.max}°)`;
+    items.push([label, inRange]);
+    if (tilt != null && !inRange) {
+      say(tilt < TILT_RANGE_DEG.min ? 'スマホをもう少し寝かせてください' : 'スマホをもう少し起こしてください', { key: 'tilt', minIntervalSec: 7 });
+    }
+  }
   $('guide-list').replaceChildren(
     ...items.map(([label, ok]) => {
       const li = document.createElement('li');

@@ -531,3 +531,13 @@ test('居眠り:平置きのスマホの上に伏せて顔がカメラを覆う�
   const close = (t) => face(t, { seg: { crownRatio: 0.38, hairFrac: 0.2, faceSkinFrac: 0.3, personFrac: 0.75 }, camDistCm: 16, verticalOffsetCm: 0 });
   assert.equal(run(b, 0, 22, close).last.metrics.covering, 0);
 });
+
+test('斜め置き:肩が映っていなくても位置合わせを通れる。頭頂部の割合はうつむきの判断に使わない', () => {
+  const f = { faceVisible: true, poseVisible: false, brightness: 120, width: 720, height: 1280, faceBox: { minX: 0.4, maxX: 0.6, minY: 0.3, maxY: 0.5 }, faceWidthNorm: 0.2 };
+  assert.equal(checkFraming(f, { setup: 'tilt' }).ok, true);
+  const a = new Analyzer(cfg, { setup: 'tilt' });
+  a.setCalibration({ ...CAL, crownRatio: 0.3, hairFrac: 0.05, personFrac: 0.3 });
+  const r = run(a, 0, 1, (t) => face(t, { seg: { crownRatio: 0.6, hairFrac: 0.1, faceSkinFrac: 0.05, personFrac: 0.35 } }));
+  assert.equal(r.last.metrics.lookingDown, 0);
+  assert.ok(Math.abs(r.last.metrics.crownDelta - 0.3) < 1e-9); // 記録はする
+});
