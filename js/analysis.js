@@ -298,7 +298,7 @@ export function personalClosedScore(f, cal) {
  */
 export function eyeClosureReason(f, cal, cfg) {
   if (!f.faceVisible) return null;
-  const personal = personalClosedScore(f, cal);
+  const personal = cfg.usePersonalClosed ? personalClosedScore(f, cal) : null;
   const calBlink = cal?.blink ?? 0.2;
   const calEar = cal?.ear ?? null;
   const blinkThr = clamp(calBlink + cfg.blinkMarginOverCal, cfg.blinkMin, cfg.blinkMax);

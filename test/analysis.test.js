@@ -693,23 +693,27 @@ test('目を閉じたときの基準:目を 3 秒閉じた間の値から作る�
   assert.deepEqual(computeClosedReference(blinkOnly, CAL8, cfg), { ear: null, blink: 0.5 });
 });
 
-test('閉眼:本人の目を閉じたときの基準で、8 回目の「前に傾いて目を閉じる」を閉眼と判定する。読む・書く・近づけるは開眼', () => {
+// 本人の基準を判定に使う設定(既定では記録だけ)
+const cfgP = { ...cfg, usePersonalClosed: true };
+
+test('【記録のみ】閉眼:本人の目を閉じたときの基準を使えば、8 回目の「前に傾いて目を閉じる」を閉眼と判定できる。読む・書く・近づけるは開眼', () => {
   const at = (ratio, blink, bow) => face(0, { ear: CAL8.ear * ratio, blink, pitchDeg: CAL8.pitchDeg + bow });
   // 前に傾いて目を閉じる:EAR 比 0.67、閉じ具合 0.35、14° うつむく(これまでの基準では判定できなかった)
-  assert.equal(eyeClosureReason(at(0.665, 0.345, 14.2), CAL8, cfg), null);
-  assert.equal(eyeClosureReason(at(0.665, 0.345, 14.2), CAL8C, cfg), 'personal');
+  assert.equal(eyeClosureReason(at(0.665, 0.345, 14.2), CAL8, cfgP), null);
+  assert.equal(eyeClosureReason(at(0.665, 0.345, 14.2), CAL8C, cfgP), 'personal');
+  assert.equal(eyeClosureReason(at(0.665, 0.345, 14.2), CAL8C, cfg), null); // 既定では記録だけ(判定に使わない)
   assert.ok(Math.abs(personalClosedScore(at(0.665, 0.345, 14.2), CAL8C) - 0.57) < 0.01);
   // 読む(EAR 比 1.05・閉じ具合 0.14)・書く(1.12・0.11)は開眼
-  assert.equal(eyeClosureReason(at(1.045, 0.139, 11.8), CAL8C, cfg), null);
-  assert.equal(eyeClosureReason(at(1.123, 0.108, 9.9), CAL8C, cfg), null);
+  assert.equal(eyeClosureReason(at(1.045, 0.139, 11.8), CAL8C, cfgP), null);
+  assert.equal(eyeClosureReason(at(1.123, 0.108, 9.9), CAL8C, cfgP), null);
   // 顔を近づける(EAR 比 0.76・閉じ具合 0.27、22° うつむく)は開眼(深くうつむいているので基準を厳しくする)
-  assert.equal(eyeClosureReason(at(0.762, 0.266, 21.5), CAL8C, cfg), null);
+  assert.equal(eyeClosureReason(at(0.762, 0.266, 21.5), CAL8C, cfgP), null);
   // 顔を上げて目を閉じる
-  assert.equal(eyeClosureReason(at(0.403, 0.484, -1.7), CAL8C, cfg), 'ear');
+  assert.equal(eyeClosureReason(at(0.403, 0.484, -1.7), CAL8C, cfgP), 'ear');
 });
 
-test('居眠り:本人の基準があれば、8 回目の「前に傾いて目を閉じる」を 10 秒で居眠りと判定する', () => {
-  const a = new Analyzer(cfg, { setup: 'landscape' });
+test('【記録のみ】居眠り:本人の基準を判定に使えば、8 回目の「前に傾いて目を閉じる」を 10 秒で居眠りと判定できる', () => {
+  const a = new Analyzer(cfgP, { setup: 'landscape' });
   a.setCalibration(CAL8C);
   const k = (t) => (Math.sin(t / 900) + 1) / 2;
   const doze = (t) => face(t, { ear: CAL8.ear * (0.62 + 0.08 * k(t)), blink: 0.33 + 0.04 * k(t), pitchDeg: CAL8.pitchDeg + 14 });
@@ -726,3 +730,22 @@ test('居眠り:伏せている間に手の検出がゆらいで「書いてい�
   assert.equal(r.last.flags.writing, false);
   assert.ok(r.events.some((e) => e.type === 'sleep'));
 });
+
+// 自由に学習(メガネ・バックカメラ・横向き。9 回目の前)のキャリブレーション値
+const CALF2 = { ...CAL, blink: 0.097, ear: 0.272, pitchDeg: 21.7, headHeight: 0.495, hairFrac: 0.035, personFrac: 0.568, closedRef: { ear: 0.148, blink: 0.391 } };
+
+test('居眠り:メガネで起きて読んでいるときの値(EAR 比 0.64〜1.00、閉じ具合 0.12〜0.34)では、居眠り・うとうとにしない(自由に学習・9 回目の前の不具合)', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(CALF2);
+  // 本人の基準では 0.4〜0.8(閉じた側)になる値が、30 秒続く
+  const k = (t) => (Math.sin(t / 1300) + 1) / 2;
+  const reading = (t) => face(t, { ear: CALF2.ear * (0.64 + 0.2 * (1 - k(t))), blink: 0.21 + 0.13 * k(t), pitchDeg: CALF2.pitchDeg + 3 });
+  const r = run(a, 0, 30, reading);
+  assert.ok(!r.events.some((e) => e.type === 'sleep' || e.type === 'drowsy'));
+  assert.ok(r.last.metrics.closedScore > 0.3); // 本人の基準での閉じ具合は記録する
+  // 以前の設定(本人の基準を判定に使う)では誤報になっていた
+  const b = new Analyzer(cfgP, { setup: 'landscape' });
+  b.setCalibration(CALF2);
+  assert.ok(run(b, 0, 30, reading).events.some((e) => e.type === 'sleep' || e.type === 'drowsy'));
+});
+
