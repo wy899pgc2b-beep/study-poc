@@ -278,8 +278,9 @@ export function computeClosedReference(features, cal, cfg) {
 }
 
 /**
- * 目の状態がはっきり読み取れるか('clear' | 'weak')。キャリブレーションで目を閉じたときの値で判断する。
+ * 【記録のみ】目の状態がはっきり読み取れるか('clear' | 'weak')。キャリブレーションで目を閉じたときの値で判断する。
  * メガネを掛けていると、低い位置のカメラからは目を閉じても閉じたように見えにくい(技術検証の 8・9 回目)。
+ * メガネでも 'clear' になることがあり(自由学習 3 回目)、本人の基準で判定できるようになったため、案内には使わない。
  */
 export function eyeSignalQuality(cal, cfg) {
   const ref = cal?.closedRef;

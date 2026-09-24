@@ -49,7 +49,7 @@ const S = {
   vision: null,
   visionGpu: null,
   stream: null,
-  phase: 'idle', // idle | guide | calibrating | calibratingClosed | running
+  phase: 'idle', // idle | guide | calibrating | calibratingClosed | waitOpen | running
   raf: null,
 };
 
@@ -293,6 +293,7 @@ function processFrame() {
   if (S.phase === 'guide') guideStep(f);
   else if (S.phase === 'calibrating') calibrationStep(f);
   else if (S.phase === 'calibratingClosed') closedCalibrationStep(f);
+  else if (S.phase === 'waitOpen' && f.t >= S.waitOpenUntil) startRunning(S.pendingCal);
   else if (S.phase === 'running') runStep(f);
   updatePerf();
 }
@@ -469,11 +470,17 @@ function closedCalibrationStep(f) {
   cal.closedRef = computeClosedReference(S.calibFeatures, cal, S.cfg);
   cal.eyeSignal = eyeSignalQuality(cal, S.cfg);
   S.voice.beep({ freq: 1046, sec: 0.3, volume: 0.6 });
-  // 目の状態が読み取りにくいとき(メガネなど)は、判定できないことがあると伝える。判定はこれまでの基準で続ける
-  if (cal.eyeSignal === 'weak') {
-    say('目を閉じたときの様子が、はっきり読み取れませんでした。メガネを掛けていると、前に傾いた居眠りを判定できないことがあります', { interrupt: true });
-  }
-  startRunning(cal);
+  // 目を開けるまで待ってから始める(自由学習:すぐに始めたため、まだ閉じていた目を「うとうと」と判定した)
+  // 目を閉じたときを記録できなければ、本人の基準が使えないことを伝える。判定はこれまでの基準で続ける
+  say(
+    cal.closedRef
+      ? '目を開けてください。始めます'
+      : '目を開けてください。目を閉じたときの記録ができなかったため、前に傾いた居眠りを判定できないことがあります',
+    { interrupt: true },
+  );
+  S.phase = 'waitOpen';
+  S.waitOpenUntil = performance.now() + 3000;
+  $('guide-title').innerHTML = '<b>目を開けてください</b>';
 }
 
 // ---------------------------------------------------------------- 学習中
