@@ -24,6 +24,13 @@ export const DIAGNOSTIC_METRICS = [
   'faceVisible',
   'faceRate',
   'dozeShadow',
+  'headMotion',
+  'lookingDown',
+  'crownRatio',
+  'crownDelta',
+  'hairFrac',
+  'personFrac',
+  'segHead',
   'poseVisible',
   'cameraTiltDeg',
 ];
@@ -33,7 +40,8 @@ const STATE_LETTERS = { work: 'w', think: 't', lookaway: 'l', drowsy: 'd', sleep
 /**
  * 1 秒ごとの様子を文字列にする(しきい値の調整用)。
  * state:w=作業 t=思考 l=よそ見 d=うとうと s=居眠り a=不在 A=離席 p=一時停止
- * face(顔を検出)・closed(閉眼)・grip(ペンの形)・doze(前に傾いた居眠りの候補・試験中):1=あり 0=なし -=不明
+ * face(顔を検出)・closed(閉眼)・grip(ペンの形)・doze(前に傾いた居眠りの候補・試験中)・
+ * bow(うつむいている)・head(髪の映り方から頭があると判定):1=あり 0=なし -=不明
  */
 export function phaseTimeline(samples, sec) {
   const n = Math.ceil(sec);
@@ -58,6 +66,8 @@ export function phaseTimeline(samples, sec) {
     closed: buckets.map((b) => flag(b, 'eyesClosed')).join(''),
     grip: buckets.map((b) => flag(b, 'penGrip')).join(''),
     doze: buckets.map((b) => flag(b, 'dozeShadow')).join(''),
+    bow: buckets.map((b) => flag(b, 'lookingDown')).join(''),
+    head: buckets.map((b) => flag(b, 'segHead')).join(''),
   };
 }
 

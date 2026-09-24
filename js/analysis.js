@@ -173,11 +173,17 @@ export function extractFeatures(frame, cfg) {
       if (eyeY != null && shoulderWidth > 0) f.slouchRatio = (f.shoulderMid.y * H - eyeY) / shoulderWidth;
       // 肩から鼻までの高さ(肩幅を 1 とする)。顔の特徴点が取れないとき(顔を机に近づけた・伏せた)にも使える
       const nose = pose[POSE.nose];
-      if ((nose.visibility ?? 1) >= 0.5 && shoulderWidth > 0) f.headHeight = ((f.shoulderMid.y - nose.y) * H) / shoulderWidth;
+      if ((nose.visibility ?? 1) >= 0.5 && shoulderWidth > 0) {
+        f.headHeight = ((f.shoulderMid.y - nose.y) * H) / shoulderWidth;
+        // 頭の動きを測るための鼻の位置(肩幅を 1 とする)
+        f.noseN = { x: (nose.x * W) / shoulderWidth, y: (nose.y * H) / shoulderWidth };
+      }
       f.headLow = f.eyeMid ? false : (pose[POSE.nose].visibility ?? 1) < 0.5 || pose[POSE.nose].y > f.shoulderMid.y - 0.05;
     }
   }
 
+  // 髪・顔の肌などの面積(頭頂部の見え方。設計書 4.9)。5 フレームに 1 回だけ計算するので、ないこともある
+  f.seg = frame.segment ?? null;
   f.present = f.faceVisible || f.poseVisible;
   return f;
 }
@@ -229,6 +235,9 @@ export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg }) {
     tiltDeg: median(faces.map(tiltOf)),
     tiltFromSensor: faces.some((f) => f.cameraTiltDeg != null),
     headHeight: median(features.map((f) => f.headHeight)),
+    crownRatio: median(features.map((f) => f.seg?.crownRatio)),
+    hairFrac: median(features.map((f) => f.seg?.hairFrac)),
+    personFrac: median(features.map((f) => f.seg?.personFrac)),
     measuredEyeDeskCm,
     cameraHeightCm: h == null ? null : measuredEyeDeskCm - h,
   };
@@ -319,6 +328,9 @@ export class Analyzer {
     this.handMotion = new HandMotion(cfg);
     this.handSamples = [];
     this.faceSamples = [];
+    this.headSamples = [];
+    this.prevNose = null;
+    this.lastSeg = null;
     this.perclos = [];
     this.closedSince = null;
     this.closedRawSince = null;
@@ -375,12 +387,12 @@ export class Analyzer {
     const fingerSpeed = median(this.handSamples.map((s) => s.fingerSpeed)) ?? 0;
     const eyeY = f.eyeMid?.y ?? 0.35;
     const handsOnDesk = f.hands.filter((h) => h.centroid.y > eyeY + (f.faceHeightNorm ?? 0.15) * 0.6);
-    // 書く動作:机の上の手がペンを持つ形(親指と人差し指の先が近い)をしている。
-    // 2 回目の実機検証で、手の速さでは「書く」と「読む」を区別できなかった(中央値 0.027 と 0.033)ため、手の形で判定する
+    // 書く動作:机の上の手が一定以上の速さで動いている(3 回目の実機検証:書く 0.145、読む 0.029、目を閉じて手を組む 0.08)。
+    // 手の形(ペンを持つ形)は、書くとき 0.57・手を組んでいるとき 0.27 と逆になったため、判定には使わず記録だけする
     const pinches = handsOnDesk.map((h) => h.pinch).filter((x) => Number.isFinite(x));
     const pinch = pinches.length ? Math.min(...pinches) : null;
     const penGrip = pinch != null && pinch < cfg.penGripPinchMax;
-    const writing = this.sustainedGap('pen', penGrip, t, cfg.penGripGapSec) >= cfg.penGripSec;
+    const writing = handsOnDesk.length > 0 && handSpeed >= cfg.writeSpeedMin;
 
     // --- 閉眼・PERCLOS
     const closed = isEyesClosed(f, cal, cfg);
@@ -400,19 +412,34 @@ export class Analyzer {
       this.closedSince = null;
     }
     const closedSec = this.closedSince == null ? 0 : (t - this.closedSince) / 1000;
-    // 書く動作の誤検出で居眠りを見逃さないよう、手の動きに関係なく長く閉じていたら居眠りとする
+    // 居眠りは手の動きに関係なく、目を閉じた時間で判定する(3 回目:手を組んだのを書く動作と誤判定し、居眠りを見逃した)。
+    // 書いている間は「うとうと」にだけしない
     if (closed) this.closedRawSince ??= t;
     else this.closedRawSince = null;
     const closedRawSec = this.closedRawSince == null ? 0 : (t - this.closedRawSince) / 1000;
 
-    // うつ伏せ:顔は見えないが体は映っていて、頭が低い。顔の検出のちらつきで途切れないよう、短い途切れは許す
+    // --- 頭のうつむき具合(設計書 4.9)
     const headRatio = cal?.headHeight && f.headHeight != null ? f.headHeight / cal.headHeight : null;
     const headLow = headRatio != null ? headRatio < cfg.headLowRatio : !!f.headLow;
-    const faceDown = !f.faceVisible && f.poseVisible && headLow && !writing;
+    // 頭頂部の見える割合(髪 ÷ (髪 + 顔の肌))のキャリブレーション時からの増え方。うつむくほど大きい
+    const seg = f.seg ?? this.lastSeg;
+    if (f.seg) this.lastSeg = f.seg;
+    const crownDelta = seg?.crownRatio != null && cal?.crownRatio != null ? seg.crownRatio - cal.crownRatio : null;
+    const lookingDown =
+      (headRatio != null && headRatio < cfg.headDownRatio) || (crownDelta != null && crownDelta > cfg.crownBowDelta);
+    // 顔も上半身も見つからなくても、頭(髪)が大きく映っていれば席にいる(3 回目:机に伏せると上半身も検出できず「離席」になった)
+    const segHead =
+      seg != null && cal?.hairFrac && cal?.personFrac
+        ? seg.hairFrac >= Math.max(cfg.segMinHairFrac, cal.hairFrac * cfg.segHairRatio) && seg.personFrac >= cal.personFrac * cfg.segPersonRatio
+        : false;
+    const present = f.present || segHead;
+    // うつ伏せ:顔は見えず、頭が低い(上半身が映っていれば肩からの高さ、映っていなければ髪だけが見えている)。
+    // 顔の検出のちらつきで途切れないよう、短い途切れは許す
+    const faceDown = !f.faceVisible && !writing && ((f.poseVisible && headLow) || (!f.poseVisible && segHead));
     const faceDownSec = this.sustainedGap('faceDown', faceDown, t, cfg.faceGapSec);
 
     // --- 離席(設計書 3.10, 4.11)
-    if (!f.present) {
+    if (!present) {
       if (this.absentSince == null) this.absentSince = t;
       this.presentSince = null;
     } else {
@@ -431,7 +458,9 @@ export class Analyzer {
     // --- よそ見
     const yawDev = cal?.yawDeg != null && f.faceVisible ? Math.abs(f.yawDeg - cal.yawDeg) : 0;
     const pitchUp = cal?.pitchDeg != null && f.faceVisible ? cal.pitchDeg - f.pitchDeg : 0;
-    const lookAwayCand = f.present && ((!f.faceVisible && !faceDown) || yawDev > cfg.lookAwayYawDeg || pitchUp > cfg.lookAwayPitchUpDeg);
+    // 顔が見えなくても、うつむいているだけ(頭が低い・頭頂部が多く見える)ならよそ見ではない(3 回目:読むときに顔が取れず、よそ見と誤判定した)
+    const lookAwayCand =
+      present && ((!f.faceVisible && !faceDown && !lookingDown) || yawDev > cfg.lookAwayYawDeg || pitchUp > cfg.lookAwayPitchUpDeg);
     // 頭の向きは強い手がかりなので、手が動いていてもよそ見とする
     const lookAwaySec = this.sustained('lookaway', lookAwayCand, t);
     const lookingAway = lookAwaySec >= cfg.lookAwaySec;
@@ -440,8 +469,8 @@ export class Analyzer {
 
     // --- 状態の決定
     let state;
-    if (!f.present) state = 'absent';
-    else if (closedSec >= cfg.sleepClosedSec || closedRawSec >= cfg.sleepClosedSecAnyHands || faceDownSec >= cfg.faceDownSec) state = 'sleep';
+    if (!present) state = 'absent';
+    else if (closedRawSec >= cfg.sleepClosedSec || faceDownSec >= cfg.faceDownSec) state = 'sleep';
     else if ((closedSec >= cfg.drowsyClosedSec || perclos >= cfg.perclosDrowsy) && !writing) state = 'drowsy';
     else if (lookingAway) state = 'lookaway';
     else if (writing) state = 'work';
@@ -450,7 +479,7 @@ export class Analyzer {
     const level = state === 'sleep' ? 'sleep' : state === 'drowsy' ? 'drowsy' : null;
     if (level !== this.sleepLevel) {
       if (level) events.push({ type: level, t });
-      else if (this.sleepLevel && f.present) events.push({ type: 'wake', t });
+      else if (this.sleepLevel && present) events.push({ type: 'wake', t });
       this.sleepLevel = level;
     }
 
@@ -496,12 +525,21 @@ export class Analyzer {
     const eyeDeskThresholdCm = cal?.measuredEyeDeskCm ? cal.measuredEyeDeskCm * (1 - cfg.eyeDeskCloseRatio) : null;
     const tooClose = (eyeDeskCm != null && eyeDeskThresholdCm != null && eyeDeskCm < eyeDeskThresholdCm) || headDropped;
 
-    // 【試験中・判定には使わない】前に傾いて居眠りしている候補:顔が見えにくくなり、体は映っていて、ペンを持っていない。
-    // 2 回目の実機検証で、前に傾いて目を閉じると目の状態を正しく判定できなかったため、別の手がかりとして記録だけ行う
+    // 顔の検出率(直近 10 秒)
     this.faceSamples.push({ t, v: f.faceVisible ? 1 : 0 });
     this.faceSamples = this.faceSamples.filter((x) => t - x.t <= cfg.faceRateWindowSec * 1000);
     const faceRate = this.faceSamples.reduce((a, x) => a + x.v, 0) / this.faceSamples.length;
-    const dozeShadow = f.poseVisible && !penGrip && faceRate < cfg.dozeShadowFaceRate;
+
+    // 頭の動き(肩幅 / 秒、直近の中央値)
+    if (f.noseN && this.prevNose && dtSec > 0) this.headSamples.push({ t, v: dist(f.noseN, this.prevNose) / dtSec });
+    this.prevNose = f.noseN ?? null;
+    this.headSamples = this.headSamples.filter((x) => t - x.t <= cfg.headMotionWindowSec * 1000);
+    const headMotion = median(this.headSamples.map((x) => x.v));
+
+    // 【試験中・判定には使わない】前に傾いて居眠りしている候補:うつむいていて、頭も手もほとんど動かない状態が続く。
+    // 前に傾いて目を閉じると目の状態を判定できない(2・3 回目)ため、目以外の手がかりとして記録だけ行う
+    const stillNow = lookingDown && headMotion != null && headMotion < cfg.dozeHeadStill && handSpeed < cfg.dozeHandStill;
+    const dozeShadow = this.sustainedGap('dozeShadow', stillNow, t, 1) >= cfg.dozeShadowSec;
     const slouch = cal?.slouchRatio != null && f.slouchRatio != null && f.slouchRatio < cal.slouchRatio * cfg.slouchRatio;
     const tilt = cal?.rollDeg != null && f.faceVisible && Math.abs(f.rollDeg - cal.rollDeg) > cfg.tiltDeg;
     for (const [key, cond, sec] of [
@@ -543,6 +581,13 @@ export class Analyzer {
         faceVisible: f.faceVisible ? 1 : 0,
         faceRate,
         dozeShadow: dozeShadow ? 1 : 0,
+        headMotion,
+        lookingDown: lookingDown ? 1 : 0,
+        crownRatio: seg?.crownRatio ?? null,
+        crownDelta,
+        hairFrac: seg?.hairFrac ?? null,
+        personFrac: seg?.personFrac ?? null,
+        segHead: segHead ? 1 : 0,
         poseVisible: f.poseVisible ? 1 : 0,
         headRatio,
         slouchRel: cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null,

@@ -212,42 +212,36 @@ function hand(cx, cy, pinch = 0.9) {
 }
 const PEN = 0.2;
 
-test('作業:机の上の手がペンを持つ形なら作業、開いた手なら思考', () => {
+test('作業:机の上の手が動いていれば作業、止まっていれば思考', () => {
   const a = new Analyzer(cfg);
   a.setCalibration(CAL);
-  assert.equal(run(a, 0, 3, (t) => face(t, { hands: [hand(0.5, 0.85, PEN)] })).last.state, 'work');
+  const writingHand = (t) => hand(0.5 + 0.03 * Math.sin(t / 150), 0.85);
+  assert.equal(run(a, 0, 3, (t) => face(t, { hands: [writingHand(t)] })).last.state, 'work');
   const b = new Analyzer(cfg);
   b.setCalibration(CAL);
   assert.equal(run(b, 0, 3, (t) => face(t, { hands: [hand(0.5, 0.85)] })).last.state, 'think');
 });
 
-test('作業:開いた手が動いているだけでは作業にしない(2 回目の実機検証:速さでは読むと書くを区別できなかった)', () => {
+test('作業:手を組んで止まっている(ペンを持つ形に見える)だけでは作業にしない(3 回目の実機検証の不具合)', () => {
   const a = new Analyzer(cfg);
   a.setCalibration(CAL);
-  const r = run(a, 0, 3, (t) => face(t, { hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] }));
+  const r = run(a, 0, 3, (t) => face(t, { hands: [hand(0.5, 0.85, PEN)] }));
   assert.equal(r.last.state, 'think');
+  assert.equal(r.last.metrics.penGrip, 1); // 手の形は記録だけする
 });
 
-test('作業:ペンの形が一瞬途切れても(1 秒以内)作業のまま', () => {
+test('作業:顔の高さで動いている手は作業にしない', () => {
   const a = new Analyzer(cfg);
   a.setCalibration(CAL);
-  run(a, 0, 3, (t) => face(t, { hands: [hand(0.5, 0.85, PEN)] }));
-  const r = run(a, 3200, 0.6, (t) => face(t, { hands: [hand(0.5, 0.85)] }));
-  assert.equal(r.last.state, 'work');
+  assert.equal(run(a, 0, 3, (t) => face(t, { hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.35)] })).last.state, 'think');
 });
 
-test('作業:手の上がペンの形でも、顔の高さにある手は作業にしない', () => {
+test('居眠り:書いている間は短く目を閉じても「うとうと」にしないが、10 秒閉じていれば居眠り', () => {
   const a = new Analyzer(cfg);
   a.setCalibration(CAL);
-  assert.equal(run(a, 0, 3, (t) => face(t, { hands: [hand(0.5, 0.35, PEN)] })).last.state, 'think');
-});
-
-test('作業:書いている間は目が閉じ気味でも居眠りにしない', () => {
-  const a = new Analyzer(cfg);
-  a.setCalibration(CAL);
-  const r = run(a, 0, 12, (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5, 0.85, PEN)] }));
-  assert.equal(r.last.state, 'work');
-  assert.ok(!r.events.some((e) => e.type === 'sleep'));
+  const make = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5 + 0.03 * Math.sin(t / 150), 0.85)] });
+  assert.equal(run(a, 0, 5, make).last.state, 'work');
+  assert.equal(run(a, 5200, 6, make).last.state, 'sleep');
 });
 
 test('癖:手が顔に 1 秒以上あれば「顔を触る」、5 秒以内の連続は 1 回にまとめる', () => {
@@ -281,17 +275,53 @@ test('姿勢:キャリブレーションがなければ距離では判定しな�
   assert.equal(r.last.flags.tooClose, false);
 });
 
-test('【試験中】前に傾いた居眠りの候補:顔が見えにくく、体が映っていて、ペンを持っていない', () => {
+test('【試験中】前に傾いた居眠りの候補:うつむいたまま頭も手も動かない状態が 5 秒続く', () => {
   const a = new Analyzer(cfg);
   a.setCalibration({ ...CAL, headHeight: 1 });
-  // 2 回目の実機検証と同じく、顔が半分くらいしか検出されない
-  const r = run(a, 0, 12, (t) => (t % 2000 < 1000 ? face(t) : lostFace(t, { headHeight: 0.9 })));
+  const still = (t) => face(t, { headHeight: 0.6, noseN: { x: 1, y: 1 } });
+  const r = run(a, 0, 7, still);
   assert.equal(r.last.metrics.dozeShadow, 1);
-  // 状態の判定には使わない
-  assert.notEqual(r.last.state, 'sleep');
+  assert.notEqual(r.last.state, 'sleep'); // 状態の判定には使わない
+  // 頭が動いていれば候補にしない
   const b = new Analyzer(cfg);
-  b.setCalibration(CAL);
-  assert.equal(run(b, 0, 12, (t) => face(t)).last.metrics.dozeShadow, 0);
+  b.setCalibration({ ...CAL, headHeight: 1 });
+  const moving = (t) => face(t, { headHeight: 0.6, noseN: { x: 1 + 0.05 * Math.sin(t / 200), y: 1 } });
+  assert.equal(run(b, 0, 7, moving).last.metrics.dozeShadow, 0);
+});
+
+test('よそ見:顔が見えなくても、うつむいているだけならよそ見にしない(3 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration({ ...CAL, headHeight: 1 });
+  const r = run(a, 0, 6, (t) => lostFace(t, { headHeight: 0.62 }));
+  assert.equal(r.last.state, 'think');
+  assert.ok(!r.events.some((e) => e.type === 'lookaway'));
+  // 顔が見えず、頭の高さがふだんどおり(後ろを向いた)ならよそ見
+  const b = new Analyzer(cfg);
+  b.setCalibration({ ...CAL, headHeight: 1 });
+  assert.equal(run(b, 0, 6, (t) => lostFace(t, { headHeight: 1.0 })).last.state, 'lookaway');
+});
+
+test('うつむき:頭頂部の見える割合がキャリブレーション時より増えたら「うつむいている」', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration({ ...CAL, crownRatio: 0.2, hairFrac: 0.02, personFrac: 0.5 });
+  const seg = (crownRatio) => ({ crownRatio, hairFrac: 0.03, faceSkinFrac: 0.02, personFrac: 0.5 });
+  assert.equal(run(a, 0, 1, (t) => face(t, { seg: seg(0.25) })).last.metrics.lookingDown, 0);
+  assert.equal(run(a, 1200, 1, (t) => face(t, { seg: seg(0.6) })).last.metrics.lookingDown, 1);
+});
+
+test('居眠り:机に伏せて顔も上半身も検出できなくても、髪が大きく映っていれば離席ではなく居眠り(3 回目の実機検証の不具合)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration({ ...CAL, headHeight: 1, crownRatio: 0.2, hairFrac: 0.02, personFrac: 0.5 });
+  const facedown = (t) => ({ ...absent(t), seg: { crownRatio: 0.95, hairFrac: 0.08, faceSkinFrac: 0.004, personFrac: 0.6 } });
+  const r = run(a, 0, 21, facedown);
+  assert.equal(r.last.away, false);
+  assert.equal(r.last.state, 'sleep');
+  assert.ok(r.events.some((e) => e.type === 'sleep'));
+  // 誰もいない(髪も人も映っていない)なら離席
+  const b = new Analyzer(cfg);
+  b.setCalibration({ ...CAL, crownRatio: 0.2, hairFrac: 0.02, personFrac: 0.5 });
+  const empty = (t) => ({ ...absent(t), seg: { crownRatio: null, hairFrac: 0, faceSkinFrac: 0, personFrac: 0.01 } });
+  assert.equal(run(b, 0, 21, empty).last.away, true);
 });
 
 test('記録:1 分ごとの集計、実効集中時間、学習スタイル', () => {
@@ -381,14 +411,6 @@ test('よそ見:手が動いていても、横を向いていればよそ見', (
   a.setCalibration(CAL);
   const r = run(a, 0, 4, (t) => face(t, { yawDeg: 40, hands: [hand(0.5, 0.85, PEN)] }));
   assert.equal(r.last.state, 'lookaway');
-});
-
-test('居眠り:書いていると判定されていても、20 秒目を閉じていれば居眠り', () => {
-  const a = new Analyzer(cfg);
-  a.setCalibration(CAL);
-  const moving = (t) => face(t, { blink: 0.9, ear: 0.08, hands: [hand(0.5, 0.85, PEN)] });
-  assert.notEqual(run(a, 0, 15, moving).last.state, 'sleep');
-  assert.equal(run(a, 15200, 6, moving).last.state, 'sleep');
 });
 
 test('癖:頬杖(指先が頬、手のひらがあごの下)は 5 秒で頬杖。その前に「顔を触る」とは数えない', () => {

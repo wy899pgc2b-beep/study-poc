@@ -255,7 +255,8 @@ function processFrame() {
   const withPose = S.frameNo % 2 === 1 || !S.lastPose;
   let det;
   try {
-    det = S.vision.detect(video, { withPose });
+    // 頭と髪の分類は重いので 5 フレームに 1 回(約 1 秒に 1 回)
+    det = S.vision.detect(video, { withPose, withSegment: S.frameNo % 5 === 1 });
   } catch (err) {
     S.perf.errors += 1;
     console.error(err);
@@ -270,7 +271,7 @@ function processFrame() {
   // 上半身は 2 回に 1 回だけ解析するので、直前の結果を使い回す(遅い端末でも途切れないよう、間隔に合わせて猶予を延ばす)
   const pose = withPose ? det.pose : det.t - S.lastPoseT < Math.max(1000, 2.5 * interval) ? S.lastPose : null;
   if (S.frameNo % 10 === 1) S.brightness = measureBrightness();
-  const frame = { t: det.t, width: video.videoWidth, height: video.videoHeight, face: det.face, hands: det.hands, pose, brightness: S.brightness, cameraTiltDeg: currentCameraTilt() };
+  const frame = { t: det.t, width: video.videoWidth, height: video.videoHeight, face: det.face, hands: det.hands, pose, brightness: S.brightness, cameraTiltDeg: currentCameraTilt(), segment: det.segment };
   const f = extractFeatures(frame, S.cfg);
 
   const ms = performance.now() - t0;
@@ -551,7 +552,9 @@ function updateLive(f, res, kind, elapsed) {
   const mt = res.metrics;
   $('m-eyedesk').textContent = mt.eyeDeskCm == null ? '—' : `${Math.round(mt.eyeDeskCm)}cm${res.flags.tooClose ? ' ⚠' : ''}`;
   $('m-blink').textContent = mt.blink == null ? '—' : `${Math.round(mt.blink * 100)}%${res.flags.eyesClosed ? '(閉)' : ''}`;
-  $('m-head').textContent = f.faceVisible ? `横${Math.round(mt.yawDev)}° 上${Math.round(mt.pitchUp)}°` : '—';
+  // 頭の向き(顔が見えるとき)と、頭頂部の見える割合(髪 ÷ 髪+顔の肌)
+  const crown = mt.crownRatio == null ? '' : ` 頭頂${Math.round(mt.crownRatio * 100)}%`;
+  $('m-head').textContent = (f.faceVisible ? `横${Math.round(mt.yawDev)}° 上${Math.round(mt.pitchUp)}°` : '顔なし') + crown;
   // 手の数と手の形(親指と人差し指の先の距離。小さいほどペンを持つ形)
   $('m-hand').textContent = `${f.hands.length}本 形${mt.pinch == null ? '—' : mt.pinch.toFixed(2)}${res.flags.writing ? ' 書' : ''}`;
 }
