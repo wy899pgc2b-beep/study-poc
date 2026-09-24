@@ -91,7 +91,16 @@ export function extractFeatures(frame, cfg) {
     hands: (frame.hands || []).map((pts) => {
       const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
       const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-      return { pts, centroid: { x: cx, y: cy } };
+      const hand = { pts, centroid: { x: cx, y: cy } };
+      // 手の形:手の大きさ(手首〜中指の付け根)を 1 とした、親指と人差し指の先の距離(ペンを持つと小さくなる)
+      const wrist = toPx(pts[0], W, H);
+      const size = dist(wrist, toPx(pts[9], W, H));
+      if (size > 0) {
+        const tip = toPx(pts[8], W, H);
+        hand.pinch = dist(toPx(pts[4], W, H), tip) / size;
+        hand.finger = { x: (tip.x - wrist.x) / size, y: (tip.y - wrist.y) / size };
+      }
+      return hand;
     }),
   };
 
@@ -162,6 +171,9 @@ export function extractFeatures(frame, cfg) {
         if ((le.visibility ?? 1) > 0.5 && (re.visibility ?? 1) > 0.5) eyeY = ((le.y + re.y) / 2) * H;
       }
       if (eyeY != null && shoulderWidth > 0) f.slouchRatio = (f.shoulderMid.y * H - eyeY) / shoulderWidth;
+      // 肩から鼻までの高さ(肩幅を 1 とする)。顔の特徴点が取れないとき(顔を机に近づけた・伏せた)にも使える
+      const nose = pose[POSE.nose];
+      if ((nose.visibility ?? 1) >= 0.5 && shoulderWidth > 0) f.headHeight = ((f.shoulderMid.y - nose.y) * H) / shoulderWidth;
       f.headLow = f.eyeMid ? false : (pose[POSE.nose].visibility ?? 1) < 0.5 || pose[POSE.nose].y > f.shoulderMid.y - 0.05;
     }
   }
@@ -198,7 +210,7 @@ export function checkFraming(f) {
  * キャリブレーション(設計書 4.12)。正しい姿勢で教材を見ている数秒間の特徴量から基準値を作る。
  * measuredEyeDeskCm:ユーザーが実際に測った目と机の距離。カメラの高さの推定に使う。
  */
-export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg, cfg }) {
+export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg }) {
   const faces = features.filter((f) => f.faceVisible);
   if (faces.length < 3) return null;
   // 端末の傾きが取れていればそれを使い、取れなければ設置スタイルの既定値を使う
@@ -207,17 +219,6 @@ export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg, cfg }
     .filter((f) => Number.isFinite(f.camDistCm))
     .map((f) => heightAboveCameraCm({ depthCm: f.camDistCm, verticalOffsetCm: f.verticalOffsetCm }, tiltOf(f)));
   const h = median(heights);
-  // 手を止めているときの「見かけの速さ」(検出のゆらぎ)。書く動作の判定の下限に使う
-  let handNoise = null;
-  if (cfg) {
-    const motion = new HandMotion(cfg);
-    const speeds = [];
-    for (const f of features) {
-      const v = motion.update(f.hands, f.t, f.faceWidthNorm || 0.15);
-      if (v != null) speeds.push(v);
-    }
-    handNoise = median(speeds);
-  }
   return {
     yawDeg: median(faces.map((f) => f.yawDeg)),
     pitchDeg: median(faces.map((f) => f.pitchDeg)),
@@ -227,7 +228,7 @@ export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg, cfg }
     slouchRatio: median(features.map((f) => f.slouchRatio)),
     tiltDeg: median(faces.map(tiltOf)),
     tiltFromSensor: faces.some((f) => f.cameraTiltDeg != null),
-    handNoise,
+    headHeight: median(features.map((f) => f.headHeight)),
     measuredEyeDeskCm,
     cameraHeightCm: h == null ? null : measuredEyeDeskCm - h,
   };
@@ -276,8 +277,9 @@ export class HandMotion {
     this.prevT = t;
     const next = [];
     let best = null;
+    let bestFinger = null;
     for (const h of hands) {
-      const cur = { tip: h.pts[8], wrist: h.pts[0], centroid: h.centroid };
+      const cur = { tip: h.pts[8], wrist: h.pts[0], centroid: h.centroid, finger: h.finger };
       let nearest = null;
       let nd = Infinity;
       for (const p of this.prev) {
@@ -288,10 +290,12 @@ export class HandMotion {
         }
       }
       if (nearest && nd < 0.25) {
-        const sm = { tip: lerp(nearest.tip, cur.tip, a), wrist: lerp(nearest.wrist, cur.wrist, a), centroid: cur.centroid };
+        const sm = { tip: lerp(nearest.tip, cur.tip, a), wrist: lerp(nearest.wrist, cur.wrist, a), centroid: cur.centroid, finger: cur.finger };
         if (dtSec > 0 && dtSec <= 1) {
           const v = Math.max(dist(sm.tip, nearest.tip), dist(sm.wrist, nearest.wrist)) / scale / dtSec;
           best = Math.max(best ?? 0, v);
+          // 指先の手首に対する動き(手全体の移動を除く。手の大きさ / 秒)。平滑化しない
+          if (cur.finger && nearest.finger) bestFinger = Math.max(bestFinger ?? 0, dist(cur.finger, nearest.finger) / dtSec);
         }
         next.push(sm);
       } else {
@@ -299,7 +303,7 @@ export class HandMotion {
       }
     }
     this.prev = next;
-    return best;
+    return best == null ? null : { speed: best, fingerSpeed: bestFinger };
   }
 }
 
@@ -319,7 +323,6 @@ export class Analyzer {
     this.closedRawSince = null;
     this.lookAwaySince = null;
     this.inLookAway = false;
-    this.faceDownSince = null;
     this.absentSince = null;
     this.presentSince = null;
     this.away = false;
@@ -330,6 +333,18 @@ export class Analyzer {
 
   setCalibration(cal) {
     this.cal = cal;
+  }
+
+  // 条件が続いた時間を測る。gapSec 以内の途切れ(検出のちらつき)は続いているとみなす。
+  sustainedGap(key, cond, t, gapSec) {
+    const g = (this.gapTimers ??= {});
+    if (cond) {
+      if (!g[key]) g[key] = { start: t, last: t };
+      else g[key].last = t;
+    } else if (g[key] && (t - g[key].last) / 1000 > gapSec) {
+      delete g[key];
+    }
+    return g[key] ? (t - g[key].start) / 1000 : 0;
   }
 
   // 条件が続いた時間を測る。続いている秒数を返す(条件が偽なら 0)。
@@ -351,16 +366,20 @@ export class Analyzer {
 
     // --- 手の動き(作業の判定)
     const scale = f.faceWidthNorm || this.prev?.faceWidthNorm || 0.15;
-    const speed = this.handMotion.update(f.hands, t, scale);
-    if (speed != null) this.handSamples.push({ t, speed });
+    const motion = this.handMotion.update(f.hands, t, scale);
+    if (motion) this.handSamples.push({ t, ...motion });
     this.handSamples = this.handSamples.filter((s) => t - s.t <= cfg.handWindowSec * 1000);
     // 一瞬の跳ね(検出の誤り)に引きずられないよう、平均ではなく中央値を使う
     const handSpeed = median(this.handSamples.map((s) => s.speed)) ?? 0;
+    const fingerSpeed = median(this.handSamples.map((s) => s.fingerSpeed)) ?? 0;
     const eyeY = f.eyeMid?.y ?? 0.35;
     const handsOnDesk = f.hands.filter((h) => h.centroid.y > eyeY + (f.faceHeightNorm ?? 0.15) * 0.6);
-    // 書く動作とみなす速さの下限。キャリブレーションで測った「止まっている手のゆらぎ」より十分速いこと
-    const writeMin = Math.max(cfg.writeSpeedMin, (cal?.handNoise ?? 0) * cfg.handNoiseFactor);
-    const writing = handsOnDesk.length > 0 && handSpeed >= writeMin && handSpeed <= cfg.writeSpeedMax;
+    // 書く動作:机の上の手がペンを持つ形(親指と人差し指の先が近い)をしている。
+    // 2 回目の実機検証で、手の速さでは「書く」と「読む」を区別できなかった(中央値 0.027 と 0.033)ため、手の形で判定する
+    const pinches = handsOnDesk.map((h) => h.pinch).filter((x) => Number.isFinite(x));
+    const pinch = pinches.length ? Math.min(...pinches) : null;
+    const penGrip = pinch != null && pinch < cfg.penGripPinchMax;
+    const writing = this.sustainedGap('pen', penGrip, t, cfg.penGripGapSec) >= cfg.penGripSec;
 
     // --- 閉眼・PERCLOS
     const closed = isEyesClosed(f, cal, cfg);
@@ -385,14 +404,11 @@ export class Analyzer {
     else this.closedRawSince = null;
     const closedRawSec = this.closedRawSince == null ? 0 : (t - this.closedRawSince) / 1000;
 
-    // うつ伏せ:顔は見えないが体は映っていて、頭が低い
-    const faceDown = !f.faceVisible && f.poseVisible && f.headLow && !writing;
-    if (faceDown) {
-      if (this.faceDownSince == null) this.faceDownSince = t;
-    } else {
-      this.faceDownSince = null;
-    }
-    const faceDownSec = this.faceDownSince == null ? 0 : (t - this.faceDownSince) / 1000;
+    // うつ伏せ:顔は見えないが体は映っていて、頭が低い。顔の検出のちらつきで途切れないよう、短い途切れは許す
+    const headRatio = cal?.headHeight && f.headHeight != null ? f.headHeight / cal.headHeight : null;
+    const headLow = headRatio != null ? headRatio < cfg.headLowRatio : !!f.headLow;
+    const faceDown = !f.faceVisible && f.poseVisible && headLow && !writing;
+    const faceDownSec = this.sustainedGap('faceDown', faceDown, t, cfg.faceGapSec);
 
     // --- 離席(設計書 3.10, 4.11)
     if (!f.present) {
@@ -473,7 +489,9 @@ export class Analyzer {
 
     // --- 姿勢(設計書 4.9)
     const eyeDeskCm = estimateEyeDeskCm(f, cal);
-    const tooClose = eyeDeskCm != null && eyeDeskCm < cfg.eyeDeskThresholdCm;
+    // 顔を机に近づけすぎると顔の特徴点が取れなくなる(2 回目の実機検証)。そのときは肩に対する頭の低さで判定する
+    const headDropped = !f.faceVisible && f.poseVisible && (headRatio != null ? headRatio < cfg.headCloseRatio : !!f.headLow);
+    const tooClose = (eyeDeskCm != null && eyeDeskCm < cfg.eyeDeskThresholdCm) || headDropped;
     const slouch = cal?.slouchRatio != null && f.slouchRatio != null && f.slouchRatio < cal.slouchRatio * cfg.slouchRatio;
     const tilt = cal?.rollDeg != null && f.faceVisible && Math.abs(f.rollDeg - cal.rollDeg) > cfg.tiltDeg;
     for (const [key, cond, sec] of [
@@ -497,7 +515,9 @@ export class Analyzer {
       flags: { writing, eyesClosed: closed, tooClose, slouch, tilt, habit: habit != null },
       metrics: {
         handSpeed,
-        writeMin,
+        fingerSpeed,
+        pinch,
+        penGrip: penGrip ? 1 : 0,
         handsCount: f.hands.length,
         handFaceDist,
         perclos,
@@ -508,6 +528,11 @@ export class Analyzer {
         pitchUp,
         blink: f.blink,
         earRatio: cal?.ear && f.ear != null ? f.ear / cal.ear : null,
+        eyesClosed: closed ? 1 : 0,
+        faceVisible: f.faceVisible ? 1 : 0,
+        poseVisible: f.poseVisible ? 1 : 0,
+        headRatio,
+        slouchRel: cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null,
       },
     };
   }

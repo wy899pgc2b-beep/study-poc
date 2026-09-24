@@ -47,10 +47,33 @@ test('目を閉じる:居眠りの判定まで到達しなければ不合格', (
 });
 
 test('離席:離席と判定されなければ不合格', () => {
-  const noAway = evaluatePhase(byId('leave'), samples(30, () => ({ state: 'absent', away: false })));
+  const noAway = evaluatePhase(byId('leave'), samples(40, () => ({ state: 'absent', away: false })));
   assert.equal(noAway.pass, false);
-  const ok = evaluatePhase(byId('leave'), samples(30, (t) => ({ state: 'absent', away: t > 22 })));
+  const ok = evaluatePhase(byId('leave'), samples(40, (t) => ({ state: 'absent', away: t > 26 })));
   assert.equal(ok.pass, true);
+});
+
+test('癖:時間の割合ではなく、検出した回数(2 回以上)で判定する', () => {
+  const one = evaluatePhase(byId('touch'), samples(20, (t) => ({ state: 'think', events: Math.abs(t - 5) < 0.1 ? ['habit_face'] : [] })));
+  assert.equal(one.pass, false);
+  const two = evaluatePhase(byId('touch'), samples(20, (t) => ({ state: 'think', events: Math.abs(t - 5) < 0.1 || Math.abs(t - 9) < 0.1 ? ['habit_head'] : [] })));
+  assert.equal(two.pass, true);
+  assert.equal(two.eventCount, 2);
+});
+
+test('机に伏せる:居眠りの判定まで到達すれば合格', () => {
+  const ok = evaluatePhase(byId('facedown'), samples(35, (t) => ({ state: t < 25 ? 'think' : 'sleep' })));
+  assert.equal(ok.pass, true);
+  const ng = evaluatePhase(byId('facedown'), samples(35, () => ({ state: 'think' })));
+  assert.equal(ng.pass, false);
+});
+
+test('1 秒ごとの様子を文字列で残す', () => {
+  const r = evaluatePhase(byId('eyes'), samples(25, (t) => ({ state: t < 10 ? 'drowsy' : 'sleep', metrics: { faceVisible: 1, eyesClosed: t < 2 ? 0 : 1 } })));
+  assert.equal(r.timeline.state, 'd'.repeat(10) + 's'.repeat(15));
+  assert.equal(r.timeline.face, '1'.repeat(25));
+  assert.equal(r.timeline.closed, '00' + '1'.repeat(23));
+  assert.equal(r.timeline.grip, '-'.repeat(25));
 });
 
 test('フラグで判定する場面(顔を近づける)', () => {

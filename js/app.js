@@ -63,6 +63,42 @@ function fmtClock(sec) {
 
 // ---------------------------------------------------------------- 設定 → 起動
 
+// 前回の設定を覚えておく(この端末のブラウザの中だけ。電池残量は毎回変わるので保存しない)
+const SETTINGS_KEY = 'study-poc-settings';
+
+function saveSettings(form) {
+  try {
+    const out = {};
+    for (const el of form.elements) {
+      if (!el.name || el.name === 'batteryStart') continue;
+      if (el.type === 'checkbox') out[el.name] = el.checked;
+      else if (el.type === 'radio') {
+        if (el.checked) out[el.name] = el.value;
+      } else out[el.name] = el.value;
+    }
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(out));
+  } catch {
+    // 保存できない環境(プライベートブラウズなど)では何もしない
+  }
+}
+
+function restoreSettings(form) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (!saved) return;
+    for (const el of form.elements) {
+      if (!el.name || !(el.name in saved)) continue;
+      if (el.type === 'checkbox') el.checked = !!saved[el.name];
+      else if (el.type === 'radio') el.checked = el.value === saved[el.name];
+      else el.value = saved[el.name];
+    }
+  } catch {
+    // 読めなければ既定値のまま
+  }
+}
+
+restoreSettings($('setup-form'));
+
 function readOptions(form) {
   const fd = new FormData(form);
   const num = (k, d) => (fd.get(k) === '' || fd.get(k) == null ? d : Number(fd.get(k)));
@@ -151,6 +187,7 @@ $('setup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('setup-form').querySelectorAll('.error').forEach((x) => x.remove());
   const { opts, cfg } = readOptions(e.target);
+  saveSettings(e.target);
   S.opts = opts;
   S.cfg = cfg;
   S.voice.unlock(); // 音声オフでも居眠りアラームは鳴らすため、常に有効にする
@@ -364,7 +401,7 @@ function calibrationStep(f) {
   const left = Math.ceil(3 - (f.t - S.calibStartAt) / 1000);
   $('guide-list').replaceChildren(Object.assign(document.createElement('li'), { textContent: `記録中… あと ${Math.max(0, left)} 秒` }));
   if (f.t - S.calibStartAt < 3000) return;
-  const cal = computeCalibration(S.calibFeatures, { measuredEyeDeskCm: S.opts.eyeDesk, tiltDeg: SETUP_TILT_DEG[S.opts.setup], cfg: S.cfg });
+  const cal = computeCalibration(S.calibFeatures, { measuredEyeDeskCm: S.opts.eyeDesk, tiltDeg: SETUP_TILT_DEG[S.opts.setup] });
   if (!cal) {
     say('顔が映っていなかったため、もう一度位置を合わせます', { interrupt: true });
     startGuide();
@@ -490,7 +527,7 @@ function scenarioStep(elapsed, dt, res, kind) {
     S.inTransition = pa.inTransition;
   }
   if (!pa.inTransition) {
-    (S.samples[pa.phase.id] ??= []).push({ phaseElapsed: pa.phaseElapsed, dt, state: res ? res.state : kind, away: kind === 'away', flags: res?.flags ?? {}, metrics: res?.metrics ?? null });
+    (S.samples[pa.phase.id] ??= []).push({ phaseElapsed: pa.phaseElapsed, dt, state: res ? res.state : kind, away: kind === 'away', flags: res?.flags ?? {}, metrics: res?.metrics ?? null, events: res?.events.map((ev) => ev.type) ?? [] });
   }
   $('scenario-step').textContent = `${pa.index + 1} / ${SCENARIO.length}`;
   $('scenario-text').textContent = pa.inTransition ? `次:${pa.phase.label}(指示を聞いてください)` : `${pa.phase.label} — あと ${Math.ceil(pa.phase.sec - pa.phaseElapsed)} 秒`;
@@ -509,7 +546,8 @@ function updateLive(f, res, kind, elapsed) {
   $('m-eyedesk').textContent = mt.eyeDeskCm == null ? '—' : `${Math.round(mt.eyeDeskCm)}cm${res.flags.tooClose ? ' ⚠' : ''}`;
   $('m-blink').textContent = mt.blink == null ? '—' : `${Math.round(mt.blink * 100)}%${res.flags.eyesClosed ? '(閉)' : ''}`;
   $('m-head').textContent = f.faceVisible ? `横${Math.round(mt.yawDev)}° 上${Math.round(mt.pitchUp)}°` : '—';
-  $('m-hand').textContent = `${f.hands.length}本 ${mt.handSpeed.toFixed(2)}${res.flags.writing ? ' 書' : ''}`;
+  // 手の数と手の形(親指と人差し指の先の距離。小さいほどペンを持つ形)
+  $('m-hand').textContent = `${f.hands.length}本 形${mt.pinch == null ? '—' : mt.pinch.toFixed(2)}${res.flags.writing ? ' 書' : ''}`;
 }
 
 // ---------------------------------------------------------------- 操作

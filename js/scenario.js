@@ -6,7 +6,56 @@ export const TRANSITION_SEC = 5;
 const FLAG_LABELS = { habit: '癖を検出', tooClose: '近すぎと判定' };
 
 // しきい値の調整のため、場面ごとに記録する数値(結果の JSON に入る)
-export const DIAGNOSTIC_METRICS = ['handSpeed', 'writeMin', 'handsCount', 'handFaceDist', 'blink', 'earRatio', 'yawDev', 'pitchUp', 'eyeDeskCm', 'cameraTiltDeg'];
+export const DIAGNOSTIC_METRICS = [
+  'handSpeed',
+  'fingerSpeed',
+  'pinch',
+  'penGrip',
+  'handsCount',
+  'handFaceDist',
+  'blink',
+  'earRatio',
+  'eyesClosed',
+  'yawDev',
+  'pitchUp',
+  'eyeDeskCm',
+  'headRatio',
+  'slouchRel',
+  'faceVisible',
+  'poseVisible',
+  'cameraTiltDeg',
+];
+
+const STATE_LETTERS = { work: 'w', think: 't', lookaway: 'l', drowsy: 'd', sleep: 's', absent: 'a', away: 'A', paused: 'p' };
+
+/**
+ * 1 秒ごとの様子を文字列にする(しきい値の調整用)。
+ * state:w=作業 t=思考 l=よそ見 d=うとうと s=居眠り a=不在 A=離席 p=一時停止 / face・closed・grip:1=あり 0=なし -=不明
+ */
+export function phaseTimeline(samples, sec) {
+  const n = Math.ceil(sec);
+  const buckets = Array.from({ length: n }, () => []);
+  for (const s of samples) {
+    const i = Math.min(n - 1, Math.floor(s.phaseElapsed));
+    if (i >= 0) buckets[i].push(s);
+  }
+  const majority = (items) => {
+    const c = {};
+    for (const x of items) c[x] = (c[x] || 0) + 1;
+    return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0];
+  };
+  const flag = (b, key) => {
+    const v = b.map((s) => s.metrics?.[key]).filter((x) => x === 0 || x === 1);
+    if (!v.length) return '-';
+    return v.reduce((a, x) => a + x, 0) / v.length >= 0.5 ? '1' : '0';
+  };
+  return {
+    state: buckets.map((b) => (b.length ? STATE_LETTERS[b.some((s) => s.away) ? 'away' : majority(b.map((s) => s.state))] ?? '?' : '-')).join(''),
+    face: buckets.map((b) => flag(b, 'faceVisible')).join(''),
+    closed: buckets.map((b) => flag(b, 'eyesClosed')).join(''),
+    grip: buckets.map((b) => flag(b, 'penGrip')).join(''),
+  };
+}
 
 function quantile(sorted, q) {
   if (!sorted.length) return null;
@@ -26,7 +75,8 @@ export function metricStats(samples) {
       .sort((a, b) => a - b);
     if (!v.length) continue;
     const r = (x) => Math.round(x * 1000) / 1000;
-    out[key] = { p10: r(quantile(v, 0.1)), median: r(quantile(v, 0.5)), p90: r(quantile(v, 0.9)), n: v.length };
+    const mean = v.reduce((a, x) => a + x, 0) / v.length;
+    out[key] = { p10: r(quantile(v, 0.1)), median: r(quantile(v, 0.5)), p90: r(quantile(v, 0.9)), mean: r(mean), n: v.length };
   }
   return out;
 }
@@ -45,20 +95,29 @@ export const SCENARIO = [
   {
     id: 'write',
     label: '書く',
-    speech: 'ノートに文字を書いてください',
+    speech: 'ペンを持って、ノートに文字を書いてください',
     sec: 25,
     graceSec: 3,
     expect: { states: ['work'], minShare: 0.5 },
-    purpose: '手を動かしている時間を作業と判定できるか',
+    purpose: 'ペンを持って書いている時間を作業と判定できるか',
   },
   {
     id: 'eyes',
     label: '目を閉じる',
-    speech: '目を閉じて、居眠りのまねをしてください。音が鳴るまで続けてください',
+    speech: '顔を上げたまま、目を閉じてください。音が鳴るまで開けないでください',
     sec: 25,
     graceSec: 4,
     expect: { states: ['drowsy', 'sleep'], minShare: 0.6, mustReach: 'sleep' },
-    purpose: '居眠りを検知できるか(10 秒で居眠りと判定)',
+    purpose: '目を閉じた居眠りを検知できるか(10 秒で居眠りと判定)',
+  },
+  {
+    id: 'facedown',
+    label: '机に伏せる',
+    speech: '机に顔を伏せて、居眠りのまねをしてください。音が鳴るまで続けてください',
+    sec: 35,
+    graceSec: 5,
+    expect: { mustReach: 'sleep' },
+    purpose: '机に伏せた居眠りを検知できるか(20 秒で居眠りと判定)',
   },
   {
     id: 'lookaway',
@@ -75,7 +134,8 @@ export const SCENARIO = [
     speech: '顔や頭を、ときどき触ってください',
     sec: 20,
     graceSec: 2,
-    expect: { flag: 'habit', minShare: 0.15 },
+    // 「ときどき」触るので、時間の割合ではなく検出した回数で判定する
+    expect: { events: ['habit_face', 'habit_head', 'chin_rest'], minEvents: 2 },
     purpose: '癖(顔や頭を触る)を検出できるか',
   },
   {
@@ -91,9 +151,10 @@ export const SCENARIO = [
     id: 'leave',
     label: '離席',
     speech: '席を立って、カメラに映らない所まで離れてください。音が鳴ったら戻ってください',
-    sec: 30,
+    // 席を立って画角から出るまでに数秒かかる(2 回目の実機検証で約 6 秒)ため、離席の判定(20 秒)に余裕を持たせる
+    sec: 40,
     graceSec: 4,
-    expect: { states: ['absent'], minShare: 0.7, mustAway: true },
+    expect: { states: ['absent'], minShare: 0.6, mustAway: true },
     purpose: '離席を検知できるか(20 秒で離席と判定)',
   },
 ];
@@ -126,40 +187,58 @@ export function evaluatePhase(phase, samples) {
   for (const s of used) share[s.state] = (share[s.state] || 0) + s.dt;
   for (const k of Object.keys(share)) share[k] = total > 0 ? share[k] / total : 0;
 
-  const result = { id: phase.id, label: phase.label, purpose: phase.purpose, seconds: total, share, notes: [], metrics: metricStats(used) };
+  const result = {
+    id: phase.id,
+    label: phase.label,
+    purpose: phase.purpose,
+    seconds: total,
+    share,
+    notes: [],
+    metrics: metricStats(used),
+    timeline: phaseTimeline(samples, phase.sec),
+  };
   if (total < 3) {
     result.pass = null;
     result.notes.push('判定できたフレームが少なすぎます');
     return result;
   }
 
+  // 指定された条件をすべて満たせば合格
   const e = phase.expect;
+  const checks = [];
   if (e.states) {
     const hit = e.states.reduce((s, k) => s + (share[k] || 0), 0);
     result.score = hit;
-    result.pass = hit >= e.minShare;
-    if (e.mustReach) {
-      const reached = used.some((s) => s.state === e.mustReach);
-      result.notes.push(reached ? '居眠りの判定まで到達' : '居眠りの判定まで到達せず');
-      if (!reached) result.pass = false;
-    }
-    if (e.mustAway) {
-      const away = used.some((s) => s.away);
-      result.notes.push(away ? '離席と判定' : '離席と判定されず');
-      if (!away) result.pass = false;
-    }
-  } else if (e.flag) {
+    checks.push(hit >= e.minShare);
+  }
+  if (e.mustReach) {
+    const reached = used.some((s) => s.state === e.mustReach);
+    result.notes.push(reached ? '居眠りの判定まで到達' : '居眠りの判定まで到達せず');
+    checks.push(reached);
+  }
+  if (e.mustAway) {
+    const away = used.some((s) => s.away);
+    result.notes.push(away ? '離席と判定' : '離席と判定されず');
+    checks.push(away);
+  }
+  if (e.flag) {
     const flagged = used.reduce((s, x) => s + (x.flags?.[e.flag] ? x.dt : 0), 0) / total;
     result.flag = e.flag;
     result.flagLabel = FLAG_LABELS[e.flag] ?? e.flag;
     result.score = flagged;
-    result.pass = flagged >= e.minShare;
+    checks.push(flagged >= e.minShare);
   }
-
+  if (e.minEvents != null) {
+    const count = samples.reduce((n, x) => n + (x.events ?? []).filter((t) => e.events.includes(t)).length, 0);
+    result.eventCount = count;
+    result.notes.push(`癖を ${count} 回検出`);
+    checks.push(count >= e.minEvents);
+  }
   if (e.maxFalseSleep != null) {
     const falseSleep = (share.drowsy || 0) + (share.sleep || 0);
     result.notes.push(`居眠りの誤判定 ${Math.round(falseSleep * 100)}%`);
-    if (falseSleep > e.maxFalseSleep) result.pass = false;
+    checks.push(falseSleep <= e.maxFalseSleep);
   }
+  result.pass = checks.every(Boolean);
   return result;
 }

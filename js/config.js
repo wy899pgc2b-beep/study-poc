@@ -25,15 +25,18 @@ export const DEFAULTS = {
   perclosMinObservedSec: 20, // これより短い観測では PERCLOS を使わない
   wakeOpenSec: 2, // 目を開けた状態がこの秒数続いたら目覚めたとみなす
   sleepClosedSecAnyHands: 20, // 手が動いていても、これだけ長く目を閉じていれば居眠り
-  faceDownSec: 30,
+  faceDownSec: 20, // 設計書の初期案は 30 秒。検証シナリオで確かめられるよう 20 秒で試す
+  faceGapSec: 2, // 顔の検出のちらつき(この秒数以内の途切れ)は続いているとみなす
+  headLowRatio: 0.5, // 肩からの頭の高さがキャリブレーション時のこの割合未満なら「頭が低い」(伏せている)
 
-  // 手の動き(作業の判定):顔の幅を 1 とした速さ(1 秒あたり)
-  // 1 回目の実機検証(2026-09-24)で、0.05 では止まっている手も「書いている」と判定されたため引き上げた
+  // 手の動き:速さの単位は、顔の幅を 1 とした 1 秒あたりの移動量
   handWindowSec: 1.5,
   handSmoothing: 0.5, // 手の位置の平滑化(1 に近いほど平滑化が弱い)
-  writeSpeedMin: 0.15,
-  handNoiseFactor: 2.5, // キャリブレーションで測ったゆらぎの何倍を書く動作の下限にするか
-  writeSpeedMax: 1.5,
+
+  // 書く動作(作業)の判定:手の形で判定する(docs/verification.md の 2 回目)
+  penGripPinchMax: 0.35, // 親指と人差し指の先の距離(手の大きさ比)がこれ未満ならペンを持つ形
+  penGripSec: 1,
+  penGripGapSec: 1,
 
   // 癖(設計書 4.7)
   habitTouchSec: 1,
@@ -46,6 +49,7 @@ export const DEFAULTS = {
   cameraFovLongSideDeg: 69,
   eyeDeskThresholdCm: 30,
   eyeDeskAlertSec: 20,
+  headCloseRatio: 0.75, // 顔が取れないとき、肩からの頭の高さがこの割合未満なら「近すぎ」
   slouchRatio: 0.8,
   slouchAlertSec: 60,
   tiltDeg: 15,
