@@ -652,6 +652,7 @@ export class Analyzer {
     let onHead = false;
     let onFace = false;
     let chinRest = false;
+    let touchHandScale = null;
     if (f.faceVisible && f.hands.length) {
       const b = f.faceBox;
       const w = b.maxX - b.minX;
@@ -666,6 +667,13 @@ export class Analyzer {
       onFace = tips.some((p) => inX(p) && p.y >= b.minY + h * 0.15 && p.y < f.chin.y);
       const underChin = [...tips, ...knuckles].some((p) => inX(p) && p.y >= f.chin.y - h * 0.1 && p.y < f.chin.y + h * 0.3);
       chinRest = underChin && handSpeed < cfg.chinRestMaxSpeed;
+      // 【記録のみ】顔に重なって映った手の大きさ(顔の幅を 1 とする)。顔を触っている手は顔と同じ距離にあるが、
+      // 顔の手前にある手(12 回目:顔を机に近づけ、手元が顔に近かった)は大きく映るはずなので、見分けられるかを調べる
+      const sizes = f.hands
+        .filter((hd) => HAND_TIPS.some((i) => inX(hd.pts[i]) && hd.pts[i].y > b.minY - h * 0.6 && hd.pts[i].y < f.chin.y))
+        .map((hd) => hd.sizeNorm)
+        .filter((x) => x > 0);
+      if (sizes.length && f.faceWidthNorm) touchHandScale = Math.max(...sizes) / f.faceWidthNorm;
     }
     const chinSec = this.sustainedGap('habitChin', chinRest, t, cfg.habitGapSec);
     const headSec = this.sustainedGap('habitHead', onHead, t, cfg.habitGapSec);
@@ -685,8 +693,8 @@ export class Analyzer {
     const headDropped = !f.faceVisible && f.poseVisible && (headRatio != null ? headRatio < cfg.headCloseRatio : poseHeadLow);
     // 本人の基準(キャリブレーション時の距離)より一定の割合以上近づいたら「近すぎ」(設計書 3.9、決定事項 D-7)
     const eyeDeskThresholdCm = cal?.measuredEyeDeskCm ? cal.measuredEyeDeskCm * (1 - cfg.eyeDeskCloseRatio) : null;
-    // 横向きでは、顔が取れていても肩からの目の高さが大きく下がっていれば「近すぎ」(12 回目:顔を横に向け手を頬に当てて近づくと、
-    // 虹彩からの距離は 18〜35cm とばらついて近すぎと出なかったが、肩からの目の高さはキャリブレーション時の 0.47〜0.61 だった)。
+    // 横向きでは、顔が取れていても肩からの目の高さが大きく下がっていれば「近すぎ」(12 回目:手元を顔に近づけて顔を机に近づけると、
+    // 手が顔に重なって映り、虹彩からの距離は 18〜35cm とばらついて近すぎと出なかったが、肩からの目の高さはキャリブレーション時の 0.47〜0.61 だった)。
     // 正面・斜め置きでは、うとうとや書くときにも 0.5〜0.57 まで下がり(3・4・6 回目)、平置きでは近づけても下がらない(5 回目)ので使わない
     const slouchRel = cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null;
     const eyesDropped =
@@ -732,6 +740,7 @@ export class Analyzer {
         penGrip: penGrip ? 1 : 0,
         handsCount: f.hands.length,
         handFaceDist,
+        touchHandScale,
         perclos,
         closedSec,
         eyeDeskCm,

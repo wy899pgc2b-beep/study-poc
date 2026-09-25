@@ -29,11 +29,11 @@ export class Voice {
     }
   }
 
-  // key を指定すると、同じ種類の読み上げを minIntervalSec 以内に繰り返さない
+  // key を指定すると、同じ種類の読み上げを minIntervalSec 以内に繰り返さない。読み上げを予約したときは、その発話を返す
   say(text, { key = null, minIntervalSec = 0, interrupt = false } = {}) {
-    if (!('speechSynthesis' in window)) return;
+    if (!('speechSynthesis' in window)) return null;
     const now = Date.now();
-    if (key && this.lastSpoken[key] && now - this.lastSpoken[key] < minIntervalSec * 1000) return;
+    if (key && this.lastSpoken[key] && now - this.lastSpoken[key] < minIntervalSec * 1000) return null;
     if (key) this.lastSpoken[key] = now;
     if (interrupt) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -41,6 +41,7 @@ export class Voice {
     if (this.voice) u.voice = this.voice;
     u.rate = 1.05;
     speechSynthesis.speak(u);
+    return u;
   }
 
   beep({ freq = 880, sec = 0.15, volume = 0.3 } = {}) {

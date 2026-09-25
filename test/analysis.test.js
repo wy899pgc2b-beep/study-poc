@@ -298,6 +298,15 @@ test('癖:手が顔に 1 秒以上あれば「顔を触る」、5 秒以内の�
   assert.ok(r2.events.some((e) => e.type === 'habit_head'));
 });
 
+test('癖:顔に重なって映った手の大きさを、顔の幅に対する比で記録する(机の上の手は記録しない)', () => {
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  const onFace = run(a, 0, 1, (t) => face(t, { hands: [{ ...hand(0.5, 0.35), sizeNorm: 0.1 }] }));
+  assert.ok(Math.abs(onFace.last.metrics.touchHandScale - 0.5) < 1e-9);
+  const onDesk = run(a, 1200, 1, (t) => face(t, { hands: [{ ...hand(0.5, 0.85), sizeNorm: 0.1 }] }));
+  assert.equal(onDesk.last.metrics.touchHandScale, null);
+});
+
 test('姿勢:本人の基準(キャリブレーション時の距離)より 25% 以上近い状態が 20 秒続いたら通知', () => {
   const a = new Analyzer(cfg);
   // 基準 30cm → 22.5cm 未満で近すぎ。カメラの高さ 10cm、目はカメラより (-verticalOffset) 上

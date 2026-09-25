@@ -13,6 +13,7 @@ export const DIAGNOSTIC_METRICS = [
   'penGrip',
   'handsCount',
   'handFaceDist',
+  'touchHandScale',
   'blink',
   'earRatio',
   'eyesClosed',

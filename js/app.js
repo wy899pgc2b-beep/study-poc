@@ -222,7 +222,7 @@ $('setup-form').addEventListener('submit', async (e) => {
 // ---------------------------------------------------------------- 共通のループ
 
 function say(text, o) {
-  if (S.opts.voice) S.voice.say(text, o);
+  return S.opts.voice ? S.voice.say(text, o) : null;
 }
 
 function startLoop() {
@@ -293,7 +293,7 @@ function processFrame() {
   if (S.phase === 'guide') guideStep(f);
   else if (S.phase === 'calibrating') calibrationStep(f);
   else if (S.phase === 'calibratingClosed') closedCalibrationStep(f);
-  else if (S.phase === 'waitOpen' && f.t >= S.waitOpenUntil) startRunning(S.pendingCal);
+  else if (S.phase === 'waitOpen' && f.t >= S.waitOpenUntil && (S.waitOpenSpoken || f.t >= S.waitOpenMaxUntil)) startRunning(S.pendingCal);
   else if (S.phase === 'running') runStep(f);
   updatePerf();
 }
@@ -477,14 +477,19 @@ function closedCalibrationStep(f) {
   S.voice.beep({ freq: 1046, sec: 0.3, volume: 0.6 });
   // 目を開けるまで待ってから始める(自由学習:すぐに始めたため、まだ閉じていた目を「うとうと」と判定した)
   // 目を閉じたときを記録できなければ、本人の基準が使えないことを伝える。判定はこれまでの基準で続ける
-  say(
+  // 案内を読み終えるまで始めない(記録できなかったときの長い案内が、「学習を始めます」で途中で切れていた)。
+  // 読み終わりの通知が来ないこともあるので、最長 12 秒で始める
+  const u = say(
     cal.closedRef
       ? '目を開けてください。始めます'
       : '目を開けてください。目を閉じたときの記録ができなかったため、前に傾いた居眠りを判定できないことがあります',
     { interrupt: true },
   );
+  S.waitOpenSpoken = !u;
+  if (u) u.onend = u.onerror = () => (S.waitOpenSpoken = true);
   S.phase = 'waitOpen';
   S.waitOpenUntil = performance.now() + 3000;
+  S.waitOpenMaxUntil = performance.now() + 12000;
   $('guide-title').innerHTML = '<b>目を開けてください</b>';
 }
 
