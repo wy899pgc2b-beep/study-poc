@@ -378,6 +378,28 @@ test('居眠り:机に伏せて顔も上半身も検出できなくても、髪�
   assert.equal(run(b, 0, 21, empty).last.away, true);
 });
 
+test('離席:誰もいない画面で上半身が誤検出されても、人の領域がほとんどなければ離席と判定する(13 回目の不具合)', () => {
+  const cal = { ...CAL, crownRatio: 0.27, hairFrac: 0.03, personFrac: 0.65 };
+  // 席を離れたあと、ときどき(3 秒のうち 1 秒)上半身だけが検出される。人の領域は画面の 0〜6%
+  const ghost = (t) =>
+    t % 3000 < 1000
+      ? { ...lostFace(t, { headHeight: -1 }), seg: { crownRatio: 0.8, hairFrac: 0, faceSkinFrac: 0, personFrac: 0.06 } }
+      : { ...absent(t), seg: { crownRatio: null, hairFrac: 0, faceSkinFrac: 0, personFrac: 0 } };
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(cal);
+  const r = run(a, 0, 22, ghost);
+  assert.equal(r.last.away, true);
+  // 以前の判定(上半身が映れば席にいる)では、離席にならなかった
+  const b = new Analyzer({ ...cfg, segAbsentRatio: 0, segAbsentFrac: 0 }, { setup: 'landscape' });
+  b.setCalibration(cal);
+  assert.equal(run(b, 0, 22, ghost).last.away, false);
+  // 人が映っていれば(机に伏せる・後ろを向くなど)、顔が見えなくても席にいる
+  const c = new Analyzer(cfg, { setup: 'landscape' });
+  c.setCalibration(cal);
+  const turned = (t) => ({ ...lostFace(t, { headHeight: 0.8 }), seg: { crownRatio: 0.5, hairFrac: 0.02, faceSkinFrac: 0, personFrac: 0.5 } });
+  assert.equal(run(c, 0, 22, turned).last.away, false);
+});
+
 test('記録:1 分ごとの集計、実効集中時間、学習スタイル', () => {
   const rec = new SessionRecorder(0, cfg);
   rec.add(10_000, 30, 'work');

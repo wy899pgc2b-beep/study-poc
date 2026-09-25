@@ -344,6 +344,7 @@ function updatePerf() {
 function startGuide() {
   S.phase = 'guide';
   S.guideOkSince = null;
+  S.guideHandAt = null;
   $('screen-camera').querySelector('.video-wrap').classList.toggle('mirror', S.opts.camera === 'front');
   $('guide-panel').hidden = false;
   $('scenario-panel').hidden = true;
@@ -358,7 +359,7 @@ function startGuide() {
   const guideSpeech = {
     stand: 'スマホの位置を合わせます。顔と肩が映るように置いてください',
     tilt: 'スマホの位置を合わせます。スマホを45度くらいに寝かせて、顔と手元が映るように置いてください',
-    landscape: 'スマホの位置を合わせます。スマホを横向きにして、少し後ろに傾けて立てかけ、顔と手元が映るように置いてください',
+    landscape: 'スマホの位置を合わせます。スマホを横向きにして、少し後ろに傾けて立てかけてください。ペンを持った手を、ノートに書くときの位置に置いてください',
     flat: 'スマホの位置を合わせます。顔が映るように置いてください',
   };
   say(guideSpeech[S.opts.setup] ?? guideSpeech.stand, { interrupt: true });
@@ -374,8 +375,14 @@ function guideStep(f) {
     ['スマホとの距離がちょうどよい', f.faceVisible && !has('too_far') && !has('too_close')],
     [S.opts.setup === 'stand' ? '肩まで映っている' : '(任意)肩まで映っている', f.poseVisible],
     ['明るさが十分', !has('dark')],
-    ['(任意)手元の手が映っている', f.hands.length > 0],
   ];
+  // 横向き:書く動作は手が映らないと判定できない(12・13 回目:書き始めて数秒で手が画面の下に外れた)。
+  // ペンを持った手が書く位置で映ることを確かめてから進める。手の検出のちらつきは 1.5 秒まで許す
+  const handRequired = S.opts.setup === 'landscape';
+  if (f.hands.length) S.guideHandAt = f.t;
+  const handOk = S.guideHandAt != null && f.t - S.guideHandAt <= 1500;
+  items.push([handRequired ? 'ペンを持った手が、書く位置で映っている' : '(任意)手元の手が映っている', handOk]);
+  if (handRequired && !handOk) say('ペンを持った手を、ノートに書くときの位置に置いてください', { key: 'hand', minIntervalSec: 8 });
   // 斜め置き・横向き:端末の傾きをその場で表示し、目安から外れていれば音声で知らせる。
   // 横向きは 25° を超えると手元が画面から外れる(検証 9・12 回目)ので、目安に入るまで位置合わせを進めない
   const tilt = f.cameraTiltDeg;
@@ -412,7 +419,7 @@ function guideStep(f) {
       return li;
     }),
   );
-  if (r.ok && !tiltBlocks) {
+  if (r.ok && !tiltBlocks && (handOk || !handRequired)) {
     S.guideOkSince ??= f.t;
     if (f.t - S.guideOkSince >= 3000) startCalibration();
   } else {

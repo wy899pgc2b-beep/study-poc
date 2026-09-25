@@ -591,7 +591,11 @@ export class Analyzer {
     const nearEyeDesk = estimateEyeDeskCm(f, cal);
     const covering =
       seg != null && seg.personFrac >= cfg.coverPersonFrac && (!f.faceVisible || (nearEyeDesk != null && nearEyeDesk < cfg.coverEyeDeskCm));
-    const present = f.present || segHead || covering;
+    // 顔が見えず、人の領域もほとんど映っていなければ、上半身の特徴点は誤検出とみなす(13 回目:席を離れたあと、誰もいない画面で
+    // 上半身が 29% のフレームで検出され、そのたびに離席の計測がやり直しになった。そのときの人の領域は画面の 0〜6%)
+    const segEmpty =
+      !f.faceVisible && seg != null && seg.personFrac < Math.max(cfg.segAbsentFrac, (cal?.personFrac ?? 0) * cfg.segAbsentRatio);
+    const present = f.faceVisible || (f.poseVisible && !segEmpty) || segHead || covering;
     // うつ伏せ:顔は見えず、頭が低い(上半身が映っていれば肩からの高さ、映っていなければ髪だけが見えている)。
     // 顔の検出のちらつきで途切れないよう、短い途切れは許す
     const faceDown = !writing && ((!f.faceVisible && ((f.poseVisible && headLow) || (!f.poseVisible && segHead))) || covering);
@@ -741,6 +745,8 @@ export class Analyzer {
         handsCount: f.hands.length,
         handFaceDist,
         touchHandScale,
+        // 【記録のみ】いちばん下に映った手の中心の高さ(画面の上端 0・下端 1)。書くときに手が画面の下に外れていくかを調べる
+        handY: f.hands.length ? Math.max(...f.hands.map((hd) => hd.centroid.y)) : null,
         perclos,
         closedSec,
         eyeDeskCm,

@@ -2,7 +2,7 @@
 
 // 試作品の版。公開のたびに上げ、version.json も同じ値にする(古い版がキャッシュから読み込まれたことに気づけるように。
 // 9 回目:公開の 3 分後に始めた検証が、キャッシュに残った 1 つ前の版で動いていた)
-export const APP_VERSION = 'poc-19';
+export const APP_VERSION = 'poc-20';
 export const DEFAULTS = {
   analysisFps: 5,
 
@@ -83,6 +83,10 @@ export const DEFAULTS = {
   segPersonRatio: 0.4, // …かつ人の面積がキャリブレーション時のこの割合以上
   coverPersonFrac: 0.85, // 人が画面のこれ以上を占め、
   coverEyeDeskCm: 10, // 顔が見えないか目と机(カメラ)の距離がこれ未満なら、頭がカメラを覆っている(平置きで伏せた)
+  // 顔が見えず、人の面積がキャリブレーション時の segAbsentRatio 倍未満、または画面の segAbsentFrac 未満なら、上半身の検出は誤検出とみなす
+  // (13 回目:席を離れたあと、誰もいない画面で上半身が検出された。そのときの人の面積は画面の 0〜6%、キャリブレーション時は 65%)
+  segAbsentRatio: 0.2,
+  segAbsentFrac: 0.05,
   // 髪の面積がキャリブレーション時のこの割合未満なら、頭は下がっていない(横や後ろを向いた)とみなし、
   // 上半身の特徴点による「頭が低い」を使わない。4〜7 回目:よそ見 0.30〜0.62、うつむく・伏せる 1.07 以上
   hairShrinkRatio: 0.7,

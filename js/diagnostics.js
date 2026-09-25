@@ -42,6 +42,7 @@ export const STATE_METRICS = [
   'handScale',
   'writeShare',
   'handsCount',
+  'handY',
   'handFaceDist',
   'touchHandScale',
   'handOnFace',

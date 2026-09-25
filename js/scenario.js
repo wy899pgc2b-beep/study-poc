@@ -14,6 +14,7 @@ export const DIAGNOSTIC_METRICS = [
   'handsCount',
   'handFaceDist',
   'touchHandScale',
+  'handY',
   'blink',
   'earRatio',
   'eyesClosed',
