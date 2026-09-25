@@ -2,7 +2,7 @@
 
 // 試作品の版。公開のたびに上げ、version.json も同じ値にする(古い版がキャッシュから読み込まれたことに気づけるように。
 // 9 回目:公開の 3 分後に始めた検証が、キャッシュに残った 1 つ前の版で動いていた)
-export const APP_VERSION = 'poc-22';
+export const APP_VERSION = 'poc-23';
 export const DEFAULTS = {
   analysisFps: 5,
 
@@ -107,6 +107,8 @@ export const DEFAULTS = {
 
   // 書く動作(作業)の判定:机の上の手の速さ(docs/verification.md の 3 回目)
   writeSpeedMin: 0.12,
+  // 手の動きは、画面の端からこの割合より内側の特徴点だけで測る(画面の外にはみ出した点は推定値でゆれる。14 回目)
+  handEdgeMargin: 0.01,
   penGripPinchMax: 0.35, // 【記録のみ】手の形(ペンを持つ形)の目安
 
   // 【記録のみ】あくび:口の開き(表情係数 jawOpen)がこの値以上の状態が、この秒数続く

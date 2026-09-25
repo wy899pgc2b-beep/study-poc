@@ -252,6 +252,8 @@ export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg }) {
     personFrac: median(features.map((f) => f.seg?.personFrac)),
     // 【記録のみ】位置合わせで置いた手の高さ(画面の上端 0・下端 1)。1 に近いほど、書くときに手が画面の下に外れやすい
     handY: median(features.filter((f) => f.hands?.length).map((f) => Math.max(...f.hands.map((hd) => hd.centroid.y)))),
+    // 【記録のみ】顔の上端の高さ(画面の上端 0)。0 に近いほど、頭を触る手が画面の上に外れやすい
+    faceTopY: median(faces.map((f) => f.faceBox?.minY)),
     measuredEyeDeskCm,
     cameraHeightCm: h == null ? null : measuredEyeDeskCm - h,
   };
@@ -391,8 +393,12 @@ export class HandMotion {
     const next = [];
     let best = null;
     let bestFinger = null;
+    // 画面の外にはみ出した特徴点は推定値で、止まっていても大きくゆれる(14 回目:手が画面の下端にかかると、読んでいるだけで
+    // 手の速さが 0.1〜0.2 と出て「書いている」と判定された。画面の内側の手は 0.02)。動きは画面の内側の点だけで測る
+    const m = this.cfg.handEdgeMargin;
+    const inFrame = (p) => p != null && p.x >= m && p.x <= 1 - m && p.y >= m && p.y <= 1 - m;
     for (const h of hands) {
-      const cur = { tip: h.pts[8], wrist: h.pts[0], centroid: h.centroid, finger: h.finger };
+      const cur = { tip: h.pts[8], wrist: h.pts[0], rawTip: h.pts[8], rawWrist: h.pts[0], centroid: h.centroid, finger: h.finger };
       let nearest = null;
       let nd = Infinity;
       for (const p of this.prev) {
@@ -403,12 +409,14 @@ export class HandMotion {
         }
       }
       if (nearest && nd < 0.25) {
-        const sm = { tip: lerp(nearest.tip, cur.tip, a), wrist: lerp(nearest.wrist, cur.wrist, a), centroid: cur.centroid, finger: cur.finger };
-        if (dtSec > 0 && dtSec <= 1) {
-          const v = Math.max(dist(sm.tip, nearest.tip), dist(sm.wrist, nearest.wrist)) / scale / dtSec;
+        const sm = { ...cur, tip: lerp(nearest.tip, cur.tip, a), wrist: lerp(nearest.wrist, cur.wrist, a) };
+        const tipOk = inFrame(cur.rawTip) && inFrame(nearest.rawTip);
+        const wristOk = inFrame(cur.rawWrist) && inFrame(nearest.rawWrist);
+        if (dtSec > 0 && dtSec <= 1 && (tipOk || wristOk)) {
+          const v = Math.max(tipOk ? dist(sm.tip, nearest.tip) : 0, wristOk ? dist(sm.wrist, nearest.wrist) : 0) / scale / dtSec;
           best = Math.max(best ?? 0, v);
           // 指先の手首に対する動き(手全体の移動を除く。手の大きさ / 秒)。平滑化しない
-          if (cur.finger && nearest.finger) bestFinger = Math.max(bestFinger ?? 0, dist(cur.finger, nearest.finger) / dtSec);
+          if (tipOk && wristOk && cur.finger && nearest.finger) bestFinger = Math.max(bestFinger ?? 0, dist(cur.finger, nearest.finger) / dtSec);
         }
         next.push(sm);
       } else {
@@ -749,6 +757,9 @@ export class Analyzer {
         touchHandScale,
         // 【記録のみ】いちばん下に映った手の中心の高さ(画面の上端 0・下端 1)。書くときに手が画面の下に外れていくかを調べる
         handY: f.hands.length ? Math.max(...f.hands.map((hd) => hd.centroid.y)) : null,
+        // 【記録のみ】顔の上端の高さ(画面の上端 0)と、頭を触る位置に手があるか。顔が画面の上に寄ると、頭を触る手が画面の外に出る(14 回目)
+        faceTopY: f.faceVisible ? f.faceBox.minY : null,
+        handOnHead: onHead ? 1 : 0,
         perclos,
         closedSec,
         eyeDeskCm,

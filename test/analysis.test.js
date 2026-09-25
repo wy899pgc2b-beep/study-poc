@@ -216,6 +216,30 @@ function hand(cx, cy, pinch = 0.9) {
 }
 const PEN = 0.2;
 
+test('作業:画面の下端からはみ出した特徴点のゆれでは「書いている」にしない(14 回目の「教材を読む」)', () => {
+  // 手首は画面の内側(0.9)、指先は画面の下にはみ出して(1.04)、推定値がフレームごとに左右にゆれる
+  const edgeHand = (t, wristX, tipX) => {
+    const pts = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.97, z: 0 }));
+    pts[0] = { x: wristX, y: 0.9, z: 0 };
+    pts[8] = { x: tipX, y: 1.04, z: 0 };
+    return { pts, centroid: { x: 0.5, y: 0.97 }, pinch: 0.9, sizeNorm: 0.1 };
+  };
+  const jitter = (t) => (Math.round(t / 200) % 2 ? 0.53 : 0.47);
+  const reading = (t) => face(t, { hands: [edgeHand(t, 0.5, jitter(t))] });
+  const a = new Analyzer(cfg);
+  a.setCalibration(CAL);
+  assert.equal(run(a, 0, 5, reading).last.state, 'think');
+  // 以前の測り方(画面の外の点も使う)では「書いている」になっていた
+  const b = new Analyzer({ ...cfg, handEdgeMargin: -1 });
+  b.setCalibration(CAL);
+  assert.equal(run(b, 0, 5, reading).last.state, 'work');
+  // 手首(画面の内側)が動いていれば、書いていると判定する
+  const c = new Analyzer(cfg);
+  c.setCalibration(CAL);
+  const writing = (t) => face(t, { hands: [edgeHand(t, 0.5 + 0.03 * Math.sin(t / 150), jitter(t))] });
+  assert.equal(run(c, 0, 5, writing).last.state, 'work');
+});
+
 test('作業:机の上の手が動いていれば作業、止まっていれば思考', () => {
   const a = new Analyzer(cfg);
   a.setCalibration(CAL);
