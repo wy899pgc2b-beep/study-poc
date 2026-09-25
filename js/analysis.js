@@ -309,10 +309,11 @@ export function personalClosedScore(f, cal) {
  * 'down' 深くうつむいていて EAR がとても小さい / 'ear' EAR がはっきり小さい /
  * 'earBlink' EAR がやや小さく閉じ具合もやや高い / 'blink' 閉じ具合が高い / 'personal' 本人の目を閉じたときの基準に近い
  */
-export function eyeClosureReason(f, cal, cfg, personalScore) {
+export function eyeClosureReason(f, cal, cfg, personalScore, lookDown) {
   if (!f.faceVisible) return null;
-  // personalScore:本人の基準での閉じ具合(直近数秒の中央値)。渡されなければこのフレームの値を使う
+  // personalScore:本人の基準での閉じ具合、lookDown:視線の下向き(どちらも直近数秒の中央値)。渡されなければこのフレームの値を使う
   const personal = !cfg.usePersonalClosed ? null : personalScore !== undefined ? personalScore : personalClosedScore(f, cal);
+  const down = lookDown !== undefined ? lookDown : f.eyeLookDown;
   const calBlink = cal?.blink ?? 0.2;
   const calEar = cal?.ear ?? null;
   const blinkThr = clamp(calBlink + cfg.blinkMarginOverCal, cfg.blinkMin, cfg.blinkMax);
@@ -321,6 +322,8 @@ export function eyeClosureReason(f, cal, cfg, personalScore) {
 
   // 深くうつむいているときは、まぶたが下がって見えるので、目の形がはっきり閉じているときだけ閉眼とする
   if (lookingFurtherDown) {
+    // 深くうつむいていると、起きていても目が細く見える。目を閉じたときはまぶたが下がり「視線の下向き」が大きくなるので、それも求める
+    if (down != null && down < cfg.lookDownMinWhenBowed) return null;
     if (earRatio != null && earRatio < cfg.earRatioStrongWhenDown) return 'down';
     return personal != null && personal >= cfg.personalCloseScoreWhenDown ? 'personal' : null;
   }
@@ -429,6 +432,7 @@ export class Analyzer {
     this.handSamples = [];
     this.writeSamples = [];
     this.personalSamples = [];
+    this.lookDownSamples = [];
     this.faceSamples = [];
     this.headSamples = [];
     this.prevNose = null;
@@ -525,7 +529,10 @@ export class Analyzer {
     if (closedScore != null) this.personalSamples.push({ t, v: closedScore });
     this.personalSamples = this.personalSamples.filter((x) => t - x.t <= cfg.personalSmoothSec * 1000);
     const closedScoreSmooth = f.faceVisible ? median(this.personalSamples.map((x) => x.v)) : null;
-    const closedBy = handOnFace ? null : eyeClosureReason(f, cal, cfg, closedScoreSmooth);
+    if (f.eyeLookDown != null) this.lookDownSamples.push({ t, v: f.eyeLookDown });
+    this.lookDownSamples = this.lookDownSamples.filter((x) => t - x.t <= cfg.personalSmoothSec * 1000);
+    const lookDownSmooth = f.faceVisible ? median(this.lookDownSamples.map((x) => x.v)) : null;
+    const closedBy = handOnFace ? null : eyeClosureReason(f, cal, cfg, closedScoreSmooth, lookDownSmooth);
     const closed = closedBy != null;
     if (f.faceVisible) {
       this.perclos.push({ t, dt: dtSec, closed });
@@ -731,6 +738,7 @@ export class Analyzer {
         closedScore,
         closedScoreSmooth,
         eyeLookDown: f.eyeLookDown ?? null,
+        eyeLookDownSmooth: lookDownSmooth,
         eyeLookUp: f.eyeLookUp ?? null,
         eyeLookSide: f.eyeLookSide ?? null,
         jawOpen: f.jawOpen ?? null,

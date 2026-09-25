@@ -9,6 +9,7 @@ export const ALERT_METRICS = [
   'closedScore',
   'closedScoreSmooth',
   'eyeLookDown',
+  'eyeLookDownSmooth',
   'eyeLookSide',
   'jawOpen',
   'pitchUp',

@@ -695,7 +695,7 @@ test('目を閉じたときの基準:目を 3 秒閉じた間の値から作る�
 });
 
 // 8 回目の調整の設定(本人の基準を、しきい値 0.5 で判定に使う)。自由に学習で誤報が多かった
-const cfgP = { ...cfg, usePersonalClosed: true, personalCloseScore: 0.5, personalCloseScoreWhenDown: 0.6 };
+const cfgP = { ...cfg, usePersonalClosed: true, personalCloseScore: 0.5, personalCloseScoreWhenDown: 0.6, lookingDownExtraDeg: 15 };
 
 test('閉眼:しきい値 0.5 なら、本人の基準で 8 回目の「前に傾いて目を閉じる」を閉眼と判定できる。読む・書く・近づけるは開眼', () => {
   const at = (ratio, blink, bow) => face(0, { ear: CAL8.ear * ratio, blink, pitchDeg: CAL8.pitchDeg + bow });
@@ -787,5 +787,35 @@ test('閉眼:本人の基準での閉じ具合が一瞬だけ高くなっても�
   const r = run(a, 0, 20, spiky);
   assert.ok(!r.events.some((e) => e.type === 'drowsy' || e.type === 'sleep'));
   assert.ok(r.last.metrics.closedScoreSmooth < 0.85);
+});
+
+// 34 分の自由学習(メガネ・バックカメラ・横向き。11 回目の後)のキャリブレーション値
+const CALF4 = { ...CAL, blink: 0.135, ear: 0.243, pitchDeg: 15.6, headHeight: 0.481, hairFrac: 0.028, personFrac: 0.568, closedRef: { ear: 0.101, blink: 0.496 } };
+
+test('居眠り:姿勢が崩れて 12〜15° 深くうつむき、目が細く見えただけなら、居眠り・うとうとにしない(34 分の自由学習の不具合)', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(CALF4);
+  // 誤報の直前の値:EAR 比 0.42〜0.53、閉じ具合 0.39〜0.50、視線の下向き 0.15〜0.27、13〜15° 深くうつむく
+  const k = (t) => (Math.sin(t / 800) + 1) / 2;
+  const slumped = (t) =>
+    face(t, { ear: CALF4.ear * (0.42 + 0.11 * k(t)), blink: 0.39 + 0.11 * (1 - k(t)), eyeLookDown: 0.15 + 0.12 * k(t), pitchDeg: CALF4.pitchDeg + 13 + 2 * k(t) });
+  const r = run(a, 0, 30, slumped);
+  assert.ok(!r.events.some((e) => e.type === 'sleep' || e.type === 'drowsy'));
+  // 以前の設定(15° から厳しい基準)では誤報になっていた
+  const b = new Analyzer({ ...cfg, lookingDownExtraDeg: 15 }, { setup: 'landscape' });
+  b.setCalibration(CALF4);
+  assert.ok(run(b, 0, 30, slumped).events.some((e) => e.type === 'sleep'));
+});
+
+test('居眠り:11 回目の「前に傾いて目を閉じる」(8° うつむく・視線の下向き 0.37〜0.46)は、引き続き居眠りと判定する', () => {
+  const cal11 = { ...CAL, blink: 0.12, ear: 0.265, pitchDeg: 12.0, closedRef: { ear: 0.111, blink: 0.504 } };
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(cal11);
+  const k = (t) => (Math.sin(t / 900) + 1) / 2;
+  const doze = (t) => face(t, { ear: cal11.ear * (0.36 + 0.13 * k(t)), blink: 0.41 + 0.09 * k(t), eyeLookDown: 0.37 + 0.09 * k(t), pitchDeg: cal11.pitchDeg + 8 + 1.5 * k(t) });
+  assert.ok(run(a, 0, 12, doze).events.some((e) => e.type === 'sleep'));
+  // 深くうつむいていても、まぶたが下がっている(視線の下向き 0.45)なら閉眼
+  assert.equal(eyeClosureReason(face(0, { ear: cal11.ear * 0.4, blink: 0.5, eyeLookDown: 0.45, pitchDeg: cal11.pitchDeg + 14 }), cal11, cfg), 'down');
+  assert.equal(eyeClosureReason(face(0, { ear: cal11.ear * 0.4, blink: 0.5, eyeLookDown: 0.2, pitchDeg: cal11.pitchDeg + 14 }), cal11, cfg), null);
 });
 

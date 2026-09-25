@@ -19,6 +19,7 @@ export const DIAGNOSTIC_METRICS = [
   'closedScore',
   'closedScoreSmooth',
   'eyeLookDown',
+  'eyeLookDownSmooth',
   'eyeLookUp',
   'eyeLookSide',
   'jawOpen',

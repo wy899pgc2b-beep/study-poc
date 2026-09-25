@@ -2,7 +2,7 @@
 
 // 試作品の版。公開のたびに上げ、version.json も同じ値にする(古い版がキャッシュから読み込まれたことに気づけるように。
 // 9 回目:公開の 3 分後に始めた検証が、キャッシュに残った 1 つ前の版で動いていた)
-export const APP_VERSION = 'poc-15';
+export const APP_VERSION = 'poc-16';
 export const DEFAULTS = {
   analysisFps: 5,
 
@@ -51,7 +51,13 @@ export const DEFAULTS = {
   eyeSignalClearEarRatio: 0.4, // 目を閉じたときの EAR 比がこれ未満、または
   eyeSignalClearBlinkRise: 0.35, // 閉じ具合がこれ以上上がれば「はっきり読み取れる」
   closedGapSec: 1, // 閉眼の途切れがこの秒数以内なら、閉じたままとみなす
-  lookingDownExtraDeg: 15, // キャリブレーションよりさらに下を向いているときは強い証拠だけで判定
+  // キャリブレーションよりこの角度以上深くうつむいているときは、強い証拠だけで判定する。15° → 10°:34 分の自由学習(メガネ)で、
+  // 姿勢が崩れて 12〜15° 深くうつむき、起きているのに居眠り 7 回・うとうと 34 回と誤判定した(目が細く見えただけ)
+  lookingDownExtraDeg: 10,
+  // …そのときは、視線の下向き(表情係数。目を閉じるとまぶたが下がって大きくなる)の直近 2 秒の中央値がこの値以上であることも求める。
+  // 誤判定した時間:中央値 0.26〜0.27・90% の値 0.37 以下。顔を近づけて読む:0.24 以下。
+  // 本当に目を閉じたとき:11 回目の前に傾いて閉じる 0.37 以上、顔を上げて閉じる 0.49 以上(8 回目の前に傾いて閉じるは 0.16〜0.27 で、もともと判定できていない)
+  lookDownMinWhenBowed: 0.35,
   drowsyClosedSec: 3,
   sleepClosedSec: 10,
   perclosWindowSec: 60,
