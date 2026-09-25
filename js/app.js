@@ -533,6 +533,7 @@ function startRunning(cal) {
   S.scenarioIndex = -1;
   S.inTransition = null;
   S.phase = 'running';
+  S.videoSize = `${video.videoWidth}×${video.videoHeight}`;
   S.perf.all = [];
   S.perf.frames = 0;
   S.perf.firstT = null;
@@ -750,7 +751,8 @@ function percentile(a, p) {
 }
 
 function finish(reason) {
-  const videoSize = `${video.videoWidth}×${video.videoHeight}`;
+  // 学習を始めたときの映像の大きさ(終わるときはスマホを持ち上げて縦向きにしていることがある。自由学習で 960×1280 と記録された)
+  const videoSize = S.videoSize ?? `${video.videoWidth}×${video.videoHeight}`;
   stopAll();
   const summary = S.recorder.summary();
   const durationSec = (performance.now() - S.startT) / 1000;

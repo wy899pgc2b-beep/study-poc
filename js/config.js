@@ -2,7 +2,7 @@
 
 // 試作品の版。公開のたびに上げ、version.json も同じ値にする(古い版がキャッシュから読み込まれたことに気づけるように。
 // 9 回目:公開の 3 分後に始めた検証が、キャッシュに残った 1 つ前の版で動いていた)
-export const APP_VERSION = 'poc-21';
+export const APP_VERSION = 'poc-22';
 export const DEFAULTS = {
   analysisFps: 5,
 
