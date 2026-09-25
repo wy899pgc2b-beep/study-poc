@@ -685,7 +685,13 @@ export class Analyzer {
     const headDropped = !f.faceVisible && f.poseVisible && (headRatio != null ? headRatio < cfg.headCloseRatio : poseHeadLow);
     // 本人の基準(キャリブレーション時の距離)より一定の割合以上近づいたら「近すぎ」(設計書 3.9、決定事項 D-7)
     const eyeDeskThresholdCm = cal?.measuredEyeDeskCm ? cal.measuredEyeDeskCm * (1 - cfg.eyeDeskCloseRatio) : null;
-    const tooClose = (eyeDeskCm != null && eyeDeskThresholdCm != null && eyeDeskCm < eyeDeskThresholdCm) || headDropped;
+    // 横向きでは、顔が取れていても肩からの目の高さが大きく下がっていれば「近すぎ」(12 回目:顔を横に向け手を頬に当てて近づくと、
+    // 虹彩からの距離は 18〜35cm とばらついて近すぎと出なかったが、肩からの目の高さはキャリブレーション時の 0.47〜0.61 だった)。
+    // 正面・斜め置きでは、うとうとや書くときにも 0.5〜0.57 まで下がり(3・4・6 回目)、平置きでは近づけても下がらない(5 回目)ので使わない
+    const slouchRel = cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null;
+    const eyesDropped =
+      this.setup === 'landscape' && f.faceVisible && !hairShrunk && slouchRel != null && slouchRel < cfg.slouchCloseRatio;
+    const tooClose = (eyeDeskCm != null && eyeDeskThresholdCm != null && eyeDeskCm < eyeDeskThresholdCm) || headDropped || eyesDropped;
 
     // 頭の動き(肩幅 / 秒、直近の中央値)
     if (f.noseN && this.prevNose && dtSec > 0) this.headSamples.push({ t, v: dist(f.noseN, this.prevNose) / dtSec });
@@ -763,7 +769,7 @@ export class Analyzer {
         poseVisible: f.poseVisible ? 1 : 0,
         headRatio: rawHeadRatio,
         hairShrunk: hairShrunk ? 1 : 0,
-        slouchRel: cal?.slouchRatio && f.slouchRatio != null ? f.slouchRatio / cal.slouchRatio : null,
+        slouchRel,
       },
     };
   }

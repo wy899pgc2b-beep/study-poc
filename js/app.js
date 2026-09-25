@@ -376,15 +376,20 @@ function guideStep(f) {
     ['明るさが十分', !has('dark')],
     ['(任意)手元の手が映っている', f.hands.length > 0],
   ];
-  // 斜め置き・横向き:端末の傾きをその場で表示し、目安から外れていれば音声で知らせる(位置合わせは止めない)
+  // 斜め置き・横向き:端末の傾きをその場で表示し、目安から外れていれば音声で知らせる。
+  // 横向きは 25° を超えると手元が画面から外れる(検証 9・12 回目)ので、目安に入るまで位置合わせを進めない
   const tilt = f.cameraTiltDeg;
   const range = TILT_RANGE_DEG[S.opts.setup];
+  const tiltRequired = S.opts.setup === 'landscape';
+  let tiltBlocks = false;
   if (range) {
     const inRange = tilt != null && tilt >= range.min && tilt <= range.max;
-    const label = tilt == null ? '(任意)スマホの傾き:センサーを読めません' : `(任意)スマホの傾き ${Math.round(tilt)}°(目安 ${range.min}〜${range.max}°)`;
+    tiltBlocks = tiltRequired && tilt != null && !inRange;
+    const opt = tiltRequired ? '' : '(任意)';
+    const label = tilt == null ? `${opt}スマホの傾き:センサーを読めません` : `${opt}スマホの傾き ${Math.round(tilt)}°(目安 ${range.min}〜${range.max}°)`;
     items.push([label, inRange]);
     if (tilt != null && !inRange) {
-      say(tilt < range.min ? 'スマホをもう少し寝かせてください' : 'スマホをもう少し起こしてください', { key: 'tilt', minIntervalSec: 30 });
+      say(tilt < range.min ? 'スマホをもう少し寝かせてください' : 'スマホをもう少し起こしてください', { key: 'tilt', minIntervalSec: tiltRequired ? 8 : 30 });
     }
   }
   // 横向きに置いたのに映像が縦のまま(画面の向きのロックがかかっている)と、顔や手を正しく検出できない
@@ -407,12 +412,12 @@ function guideStep(f) {
       return li;
     }),
   );
-  if (r.ok) {
+  if (r.ok && !tiltBlocks) {
     S.guideOkSince ??= f.t;
     if (f.t - S.guideOkSince >= 3000) startCalibration();
   } else {
     S.guideOkSince = null;
-    say(r.issues[0].speech, { key: 'guide', minIntervalSec: 7 });
+    if (!r.ok) say(r.issues[0].speech, { key: 'guide', minIntervalSec: 7 });
   }
 }
 

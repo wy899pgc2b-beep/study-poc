@@ -833,6 +833,31 @@ test('姿勢:顔を近づけて顔の検出がちらついても、20 秒続け�
   assert.ok(!run(b, 0, 25, make).events.some((e) => e.type === 'posture_close'));
 });
 
+test('姿勢:横向きでは、顔が取れていて虹彩からの距離がばらついても、肩からの目の高さが大きく下がれば「近すぎ」(12 回目)', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration({ ...CAL, cameraHeightCm: 10, measuredEyeDeskCm: 30 });
+  const k = (t) => (Math.sin(t / 700) + 1) / 2;
+  // 虹彩からの距離は基準 22.5cm より遠く(24〜35cm)出たまま、肩からの目の高さは 0.47〜0.54
+  const leaning = (t) => face(t, { camDistCm: 40, verticalOffsetCm: -(14 + 11 * k(t)), slouchRatio: 0.47 + 0.07 * k(t) });
+  const r = run(a, 0, 25, leaning);
+  assert.ok(r.events.some((e) => e.type === 'posture_close'));
+  // 以前の判定(虹彩からの距離と、顔が取れないときの頭の高さだけ)では通知できなかった
+  const old = new Analyzer({ ...cfg, slouchCloseRatio: 0 }, { setup: 'landscape' });
+  old.setCalibration({ ...CAL, cameraHeightCm: 10, measuredEyeDeskCm: 30 });
+  assert.ok(!run(old, 0, 25, leaning).events.some((e) => e.type === 'posture_close'));
+  // 読む・書く・うとうと(0.72 以上)や、強く背中を丸めたとき(0.57〜0.63)は近すぎにしない
+  const b = new Analyzer(cfg, { setup: 'landscape' });
+  b.setCalibration({ ...CAL, cameraHeightCm: 10, measuredEyeDeskCm: 30 });
+  const slumped = (t) => face(t, { camDistCm: 40, verticalOffsetCm: -17, slouchRatio: 0.57 + 0.06 * k(t) });
+  const r2 = run(b, 0, 25, slumped);
+  assert.ok(!r2.events.some((e) => e.type === 'posture_close'));
+  assert.equal(r2.last.flags.tooClose, false);
+  // 正面に立てたときは、うとうとでも 0.5 前後まで下がる(3・4 回目)ので、この判定は使わない
+  const c = new Analyzer(cfg, { setup: 'stand' });
+  c.setCalibration({ ...CAL, cameraHeightCm: 10, measuredEyeDeskCm: 30 });
+  assert.ok(!run(c, 0, 25, leaning).events.some((e) => e.type === 'posture_close'));
+});
+
 test('居眠り:横向きでは、顔が見えなくても頭が肩の線より上(顔を机に近づけた)なら、伏せた居眠りにしない(27 分の自由学習の不具合)', () => {
   const cal = { ...CAL, headHeight: 0.488, hairFrac: 0.032, personFrac: 0.561 };
   // 顔を近づけて読む:顔は取れず、肩からの頭の高さはキャリブレーション時の 0.03〜0.41

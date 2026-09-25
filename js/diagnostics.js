@@ -49,6 +49,9 @@ export const STATE_METRICS = [
   'hairShrunk',
   'eyeDeskCm',
   'tooClose',
+  'slouchRel',
+  // 【記録のみ】頭の動き(前に傾いた居眠りを、目以外の手がかりで見分けられるかを調べる)
+  'headMotion',
   'perclos',
 ];
 

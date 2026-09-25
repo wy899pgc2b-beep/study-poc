@@ -2,7 +2,7 @@
 
 // 試作品の版。公開のたびに上げ、version.json も同じ値にする(古い版がキャッシュから読み込まれたことに気づけるように。
 // 9 回目:公開の 3 分後に始めた検証が、キャッシュに残った 1 つ前の版で動いていた)
-export const APP_VERSION = 'poc-17';
+export const APP_VERSION = 'poc-18';
 export const DEFAULTS = {
   analysisFps: 5,
 
@@ -133,6 +133,9 @@ export const DEFAULTS = {
   // 一般的な目安。本人の基準がこれより近いときに、参考として 1 回だけ案内する
   eyeDeskGuidelineCm: 30,
   headCloseRatio: 0.75, // 顔が取れないとき、肩からの頭の高さがこの割合未満なら「近すぎ」
+  // 横向きでは、顔が取れていても、肩からの目の高さがキャリブレーション時のこの割合未満なら「近すぎ」。顔を近づける場面は 0.25〜0.52、
+  // それ以外の場面(読む・書く・うとうと)は 0.72 以上、27 分の自由学習で強く背中を丸めたときも 0.57 以上だった
+  slouchCloseRatio: 0.55,
   slouchRatio: 0.8,
   slouchAlertSec: 60,
   tiltDeg: 15,
