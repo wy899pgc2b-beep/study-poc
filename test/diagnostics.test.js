@@ -31,7 +31,7 @@ test('自由に学習の記録:警告の直前 12 秒の様子(数値の分布�
 });
 
 test('自由に学習の記録:長く使っても、状態ごとに残す数と警告の数には上限がある', () => {
-  const d = new SessionDiagnostics({ perState: 50, maxAlerts: 3 });
+  const d = new SessionDiagnostics({ perState: 50, maxOtherAlerts: 3 });
   feed(d, 0, 100, () => ({ state: 'think', metrics: { earRatio: 1 } }));
   for (let i = 0; i < 5; i++) d.alert({ type: 'habit_face', t: 100_000 }, 0);
   const r = d.result();
@@ -39,4 +39,33 @@ test('自由に学習の記録:長く使っても、状態ごとに残す数と�
   assert.ok(Math.abs(r.byState.think.sec - 100) < 0.3);
   assert.equal(r.alerts.length, 3);
   assert.equal(r.alertCount, 5);
+});
+
+test('自由に学習の記録:うとうと・居眠りは癖などとは別枠で残し、学習の後半の分も残る(34 分の自由学習では最初の 30 件だけだった)', () => {
+  // 乱数を決めておき、上限を超えた後も入れ替えが起きるようにする
+  let i = 0;
+  const seq = [0.1, 0.5, 0.2, 0.9, 0.05, 0.3, 0.15, 0.6];
+  const d = new SessionDiagnostics({ maxSleepyAlerts: 4, maxOtherAlerts: 2, random: () => seq[i++ % seq.length] });
+  feed(d, 0, 5, () => ({ state: 'think', metrics: { earRatio: 1 } }));
+  // 癖が先にたくさん出ても、うとうと・居眠りの枠は減らない
+  for (let k = 0; k < 10; k++) d.alert({ type: 'habit_face', t: 1000 + k }, 0);
+  for (let k = 0; k < 20; k++) d.alert({ type: k % 5 ? 'drowsy' : 'sleep', t: 2000 + k * 60_000 }, 0);
+  const r = d.result();
+  const sleepy = r.alerts.filter((a) => a.type === 'drowsy' || a.type === 'sleep');
+  assert.equal(sleepy.length, 4);
+  assert.equal(r.alerts.filter((a) => a.type === 'habit_face').length, 2);
+  assert.deepEqual(r.alertCounts, { sleepy: 20, other: 10 });
+  assert.ok(sleepy.some((a) => a.sec > 5 * 60)); // 5 番目以降(後半)の警告も残る
+  // 時刻の順に並ぶ
+  assert.deepEqual(r.alerts.map((a) => a.sec), [...r.alerts.map((a) => a.sec)].sort((a, b) => a - b));
+});
+
+test('自由に学習の記録:前かがみの通知の直前の姿勢の数値を残す', () => {
+  const d = new SessionDiagnostics();
+  feed(d, 0, 13, () => ({ state: 'think', metrics: { slouchRel: 0.7, headRatio: 0.8, eyeDeskCm: 31 } }));
+  d.alert({ type: 'posture_slouch', t: 12_800 }, 0);
+  const a = d.result().alerts[0];
+  assert.equal(a.type, 'posture_slouch');
+  assert.equal(a.metrics.slouchRel, '0.7/0.7/0.7');
+  assert.equal(a.metrics.eyeDeskCm, '31/31/31');
 });

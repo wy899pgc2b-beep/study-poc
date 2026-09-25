@@ -3,7 +3,26 @@
 import { metricStats, phaseTimeline } from './scenario.js';
 
 // 警告の直前の様子として残す数値
-export const ALERT_METRICS = ['earRatio', 'blink', 'closedScore', 'closedScoreSmooth', 'eyeLookDown', 'eyeLookSide', 'jawOpen', 'pitchUp', 'handSpeed', 'handScale', 'handFaceDist', 'faceVisible', 'handOnFace', 'writeShare'];
+export const ALERT_METRICS = [
+  'earRatio',
+  'blink',
+  'closedScore',
+  'closedScoreSmooth',
+  'eyeLookDown',
+  'eyeLookSide',
+  'jawOpen',
+  'pitchUp',
+  'handSpeed',
+  'handScale',
+  'handFaceDist',
+  'faceVisible',
+  'handOnFace',
+  'writeShare',
+  // 姿勢(前かがみの通知が、後ろにもたれただけのときにも出るかを調べる)
+  'slouchRel',
+  'headRatio',
+  'eyeDeskCm',
+];
 
 // 状態ごとの分布として残す数値
 export const STATE_METRICS = [
@@ -30,18 +49,20 @@ export const STATE_METRICS = [
   'perclos',
 ];
 
-const ALERT_TYPES = new Set(['drowsy', 'sleep', 'habit_face', 'habit_head', 'chin_rest', 'lookaway', 'posture_close', 'yawn']);
+const ALERT_TYPES = new Set(['drowsy', 'sleep', 'habit_face', 'habit_head', 'chin_rest', 'lookaway', 'posture_close', 'posture_slouch', 'yawn']);
+// うとうと・居眠りは、ほかの警告とは別に数を数えて残す(34 分の自由学習で、最初の 30 件だけが残り、後半の誤報を調べられなかった)
+const SLEEPY = new Set(['drowsy', 'sleep']);
 const STATES = ['work', 'think', 'lookaway', 'drowsy', 'sleep'];
 
 export class SessionDiagnostics {
-  constructor({ contextSec = 12, maxAlerts = 30, perState = 1500, random = Math.random } = {}) {
+  constructor({ contextSec = 12, maxSleepyAlerts = 40, maxOtherAlerts = 20, perState = 1500, random = Math.random } = {}) {
     this.contextSec = contextSec;
-    this.maxAlerts = maxAlerts;
+    this.caps = { sleepy: maxSleepyAlerts, other: maxOtherAlerts };
     this.perState = perState;
     this.random = random;
     this.recent = [];
     this.byState = {};
-    this.alerts = [];
+    this.alertGroups = { sleepy: { seen: 0, items: [] }, other: { seen: 0, items: [] } };
     this.alertCount = 0;
   }
 
@@ -66,19 +87,28 @@ export class SessionDiagnostics {
   alert(ev, startT) {
     if (!ALERT_TYPES.has(ev.type)) return;
     this.alertCount += 1;
-    if (this.alerts.length >= this.maxAlerts) return;
+    // 上限を超えたら、学習の最初から最後まで偏りなく残るよう無作為に入れ替える(リザーバーサンプリング)
+    const kind = SLEEPY.has(ev.type) ? 'sleepy' : 'other';
+    const g = this.alertGroups[kind];
+    const cap = this.caps[kind];
+    g.seen += 1;
+    let slot = g.items.length;
+    if (slot >= cap) {
+      slot = Math.floor(this.random() * g.seen);
+      if (slot >= cap) return;
+    }
     const from = ev.t - this.contextSec * 1000;
     const ctx = this.recent.filter((s) => s.t >= from).map((s) => ({ ...s, phaseElapsed: (s.t - from) / 1000 }));
     const tl = phaseTimeline(ctx, this.contextSec);
     // 貼り付けやすいよう、分布は「10%/中央値/90%」の文字列にする
     const stats = metricStats(ctx, ALERT_METRICS);
     const metrics = Object.fromEntries(Object.entries(stats).map(([k, v]) => [k, `${v.p10}/${v.median}/${v.p90}`]));
-    this.alerts.push({
+    g.items[slot] = {
       type: ev.type,
       sec: Math.round((ev.t - startT) / 100) / 10,
       metrics,
       timeline: { state: tl.state, closed: tl.closed, by: tl.by, write: tl.write, face: tl.face },
-    });
+    };
   }
 
   result() {
@@ -86,6 +116,8 @@ export class SessionDiagnostics {
     for (const [state, b] of Object.entries(this.byState)) {
       byState[state] = { sec: Math.round(b.sec * 10) / 10, metrics: metricStats(b.samples, STATE_METRICS) };
     }
-    return { contextSec: this.contextSec, alertCount: this.alertCount, alerts: this.alerts, byState };
+    const alerts = [...this.alertGroups.sleepy.items, ...this.alertGroups.other.items].sort((a, b) => a.sec - b.sec);
+    const alertCounts = { sleepy: this.alertGroups.sleepy.seen, other: this.alertGroups.other.seen };
+    return { contextSec: this.contextSec, alertCount: this.alertCount, alertCounts, alerts, byState };
   }
 }
