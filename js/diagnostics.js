@@ -19,7 +19,8 @@ export const ALERT_METRICS = [
   'faceVisible',
   'handOnFace',
   'writeShare',
-  // 姿勢(前かがみの通知が、後ろにもたれただけのときにも出るかを調べる)
+  // 姿勢(前かがみの通知が、後ろにもたれただけのときにも出るか、近すぎを判定できているかを調べる)
+  'tooClose',
   'slouchRel',
   'headRatio',
   'eyeDeskCm',
@@ -47,6 +48,7 @@ export const STATE_METRICS = [
   'lookingDown',
   'hairShrunk',
   'eyeDeskCm',
+  'tooClose',
   'perclos',
 ];
 

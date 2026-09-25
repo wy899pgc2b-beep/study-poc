@@ -819,3 +819,34 @@ test('居眠り:11 回目の「前に傾いて目を閉じる」(8° うつむ�
   assert.equal(eyeClosureReason(face(0, { ear: cal11.ear * 0.4, blink: 0.5, eyeLookDown: 0.2, pitchDeg: cal11.pitchDeg + 14 }), cal11, cfg), null);
 });
 
+test('姿勢:顔を近づけて顔の検出がちらついても、20 秒続けば「近すぎ」を通知する(27 分の自由学習の不具合)', () => {
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration({ ...CAL, headHeight: 1, measuredEyeDeskCm: 30 });
+  // ふだんは顔が取れず頭が低い(近すぎ)が、3 秒に 1 回だけ顔が取れて距離 24cm(基準 22.5cm より遠い)と出る
+  // (CAL のカメラの高さ 10cm・傾き 0° なので、目と机の距離 = 10 − verticalOffsetCm = 24cm)
+  const make = (t) => (t % 3000 < 200 ? face(t, { camDistCm: 30, verticalOffsetCm: -14, headHeight: 0.3 }) : lostFace(t, { headHeight: 0.2 }));
+  const r = run(a, 0, 25, make);
+  assert.ok(r.events.some((e) => e.type === 'posture_close'));
+  // 以前の計測(途切れを許さない)では通知できなかった
+  const b = new Analyzer({ ...cfg, postureGapSec: 0 }, { setup: 'landscape' });
+  b.setCalibration({ ...CAL, headHeight: 1, measuredEyeDeskCm: 30 });
+  assert.ok(!run(b, 0, 25, make).events.some((e) => e.type === 'posture_close'));
+});
+
+test('居眠り:横向きでは、顔が見えなくても頭が肩の線より上(顔を机に近づけた)なら、伏せた居眠りにしない(27 分の自由学習の不具合)', () => {
+  const cal = { ...CAL, headHeight: 0.488, hairFrac: 0.032, personFrac: 0.561 };
+  // 顔を近づけて読む:顔は取れず、肩からの頭の高さはキャリブレーション時の 0.03〜0.41
+  const a = new Analyzer(cfg, { setup: 'landscape' });
+  a.setCalibration(cal);
+  const k = (t) => (Math.sin(t / 1000) + 1) / 2;
+  const leaning = (t) => lostFace(t, { headHeight: cal.headHeight * (0.03 + 0.38 * k(t)), seg: { crownRatio: 0.5, hairFrac: 0.06, faceSkinFrac: 0.02, personFrac: 0.6 } });
+  const r = run(a, 0, 25, leaning);
+  assert.ok(!r.events.some((e) => e.type === 'sleep'));
+  assert.ok(r.events.some((e) => e.type === 'posture_close'));
+  // 頭が肩の線より下(伏せる:−0.5)なら、20 秒で居眠り
+  const b = new Analyzer(cfg, { setup: 'landscape' });
+  b.setCalibration(cal);
+  const facedown = (t) => lostFace(t, { headHeight: cal.headHeight * -0.5, seg: { crownRatio: 0.9, hairFrac: 0.3, faceSkinFrac: 0.01, personFrac: 0.8 } });
+  assert.ok(run(b, 0, 22, facedown).events.some((e) => e.type === 'sleep'));
+});
+

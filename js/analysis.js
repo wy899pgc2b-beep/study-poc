@@ -572,7 +572,8 @@ export class Analyzer {
     const rawHeadRatio = cal?.headHeight && f.headHeight != null ? f.headHeight / cal.headHeight : null;
     const headRatio = hairShrunk ? null : rawHeadRatio;
     const poseHeadLow = !hairShrunk && !!f.headLow; // 頭の高さの比が取れないときの目安
-    const headLow = headRatio != null ? headRatio < cfg.headLowRatio : poseHeadLow;
+    const headLowThr = this.setup === 'landscape' ? cfg.headLowRatioLandscape : cfg.headLowRatio;
+    const headLow = headRatio != null ? headRatio < headLowThr : poseHeadLow;
     // 頭頂部の見える割合(髪 ÷ (髪 + 顔の肌))のキャリブレーション時からの増え方。うつむくほど大きい
     const crownDelta = seg?.crownRatio != null && cal?.crownRatio != null ? seg.crownRatio - cal.crownRatio : null;
     // 頭頂部の割合でうつむきを判断するのは、正面に立てたときだけ(5 回目:平置きでは、うつむいても割合は変わらず、横を向くと増えた。
@@ -703,12 +704,13 @@ export class Analyzer {
       ['posture_slouch', slouch, cfg.slouchAlertSec],
       ['posture_tilt', tilt, cfg.tiltAlertSec],
     ]) {
-      const s = this.sustained(key, cond, t);
+      // 検出のちらつきで計測がやり直しにならないよう、短い途切れは許す
+      const s = this.sustainedGap(key, cond, t, cfg.postureGapSec);
       if (s >= sec && !this.timers[key + ':fired']) {
         this.timers[key + ':fired'] = true;
         events.push({ type: key, t });
       }
-      if (!cond) delete this.timers[key + ':fired'];
+      if (!cond && s === 0) delete this.timers[key + ':fired'];
     }
 
     this.prev = f;
@@ -743,6 +745,7 @@ export class Analyzer {
         eyeLookSide: f.eyeLookSide ?? null,
         jawOpen: f.jawOpen ?? null,
         writing: writing ? 1 : 0,
+        tooClose: tooClose ? 1 : 0,
         writeShare,
         handScale,
         handOnFace: handOnFace ? 1 : 0,
