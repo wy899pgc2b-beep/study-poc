@@ -250,6 +250,8 @@ export function computeCalibration(features, { measuredEyeDeskCm, tiltDeg }) {
     crownRatio: median(features.map((f) => f.seg?.crownRatio)),
     hairFrac: median(features.map((f) => f.seg?.hairFrac)),
     personFrac: median(features.map((f) => f.seg?.personFrac)),
+    // 【記録のみ】位置合わせで置いた手の高さ(画面の上端 0・下端 1)。1 に近いほど、書くときに手が画面の下に外れやすい
+    handY: median(features.filter((f) => f.hands?.length).map((f) => Math.max(...f.hands.map((hd) => hd.centroid.y)))),
     measuredEyeDeskCm,
     cameraHeightCm: h == null ? null : measuredEyeDeskCm - h,
   };

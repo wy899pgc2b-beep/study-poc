@@ -2,7 +2,7 @@
 
 // 試作品の版。公開のたびに上げ、version.json も同じ値にする(古い版がキャッシュから読み込まれたことに気づけるように。
 // 9 回目:公開の 3 分後に始めた検証が、キャッシュに残った 1 つ前の版で動いていた)
-export const APP_VERSION = 'poc-20';
+export const APP_VERSION = 'poc-21';
 export const DEFAULTS = {
   analysisFps: 5,
 
@@ -159,4 +159,7 @@ export const SETUP_TILT_DEG = { stand: 0, tilt: 45, landscape: 20, flat: 90 };
 
 // 置き方ごとの目安の角度(カメラが水平より上を向く角度)
 // 横向き:7・8 回目と自由学習(20.6〜23°)では手元が映ったが、9 回目(30°)は「書く」で手がほとんど映らなかった
-export const TILT_RANGE_DEG = { tilt: { min: 35, max: 55 }, landscape: { min: 10, max: 25 } };
+// 横向き:カメラは机から約 3cm の高さにあり、画面の下端は「傾き − 27°」の方向。傾きが大きいと、体の近くの机(手元)が映らない
+// (机が映るのは、20° でスマホから 23cm より先、22.9° で 38cm より先、25° で 74cm より先。13 回目は 22.9° で、体の右で書く手が外れた)。
+// 10° でも、画面の上端(37°)は目の方向(スマホから 40〜60cm で 24〜34°)より上にある
+export const TILT_RANGE_DEG = { tilt: { min: 35, max: 55 }, landscape: { min: 10, max: 20 } };

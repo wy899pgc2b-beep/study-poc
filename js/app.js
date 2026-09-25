@@ -345,6 +345,7 @@ function startGuide() {
   S.phase = 'guide';
   S.guideOkSince = null;
   S.guideHandAt = null;
+  S.guideNoHandSince = null;
   $('screen-camera').querySelector('.video-wrap').classList.toggle('mirror', S.opts.camera === 'front');
   $('guide-panel').hidden = false;
   $('scenario-panel').hidden = true;
@@ -382,9 +383,22 @@ function guideStep(f) {
   if (f.hands.length) S.guideHandAt = f.t;
   const handOk = S.guideHandAt != null && f.t - S.guideHandAt <= 1500;
   items.push([handRequired ? 'ペンを持った手が、書く位置で映っている' : '(任意)手元の手が映っている', handOk]);
-  if (handRequired && !handOk) say('ペンを持った手を、ノートに書くときの位置に置いてください', { key: 'hand', minIntervalSec: 8 });
+  if (handRequired && !handOk) {
+    S.guideNoHandSince ??= f.t;
+    // 手を置いても映らないときは、置き方を直してもらう(スマホを起こすと画面の下端が下がり、遠ざけると手元が画面に入る)
+    const long = f.t - S.guideNoHandSince > 12000;
+    const canRaise = f.cameraTiltDeg == null || f.cameraTiltDeg > 13;
+    const speech = !long
+      ? 'ペンを持った手を、ノートに書くときの位置に置いてください'
+      : canRaise
+        ? '手元が映っていません。スマホをもう少し起こすか、少し遠ざけてください'
+        : '手元が映っていません。スマホを少し遠ざけてください';
+    say(speech, { key: 'hand', minIntervalSec: 8 });
+  } else {
+    S.guideNoHandSince = null;
+  }
   // 斜め置き・横向き:端末の傾きをその場で表示し、目安から外れていれば音声で知らせる。
-  // 横向きは 25° を超えると手元が画面から外れる(検証 9・12 回目)ので、目安に入るまで位置合わせを進めない
+  // 横向きは傾きが大きいと手元が画面の下に外れる(検証 9・12・13 回目。config.js の TILT_RANGE_DEG)ので、目安に入るまで位置合わせを進めない
   const tilt = f.cameraTiltDeg;
   const range = TILT_RANGE_DEG[S.opts.setup];
   const tiltRequired = S.opts.setup === 'landscape';
